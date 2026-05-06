@@ -1,0 +1,20 @@
+{
+    "name": "wechat-article-saver",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "wechat:puppeteer": "node save_wechat_article_puppeteer.mjs",
+        "app": "node server.mjs",
+        "start": "node server.mjs",
+        "tauri:dev": "tauri dev",
+        "tauri:build": "tauri build"
+    },
+    "dependencies": {
+        "puppeteer": "^24.6.1",
+        "turndown": "^7.2.0"
+    },
+    "devDependencies": {
+        "@tauri-apps/cli": "^2.0.0"
+    }
+}

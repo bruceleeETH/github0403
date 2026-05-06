@@ -1,0 +1,38 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "公众号作者跟踪台",
+    "version": "1.0.0",
+    "identifier": "com.li.wechat-author-tracker",
+    "build": {
+        "frontendDist": "../webapp",
+        "beforeBuildCommand": "npm ci"
+    },
+    "app": {
+        "security": {
+            "csp": null
+        },
+        "windows": []
+    },
+    "bundle": {
+        "active": true,
+        "targets": "app",
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ],
+        "resources": [
+            "../server.mjs",
+            "../save_wechat_article_puppeteer.mjs",
+            "../package.json",
+            "../package-lock.json",
+            "../webapp",
+            "../node_modules"
+        ],
+        "macOS": {
+            "minimumSystemVersion": "12.0"
+        }
+    }
+}

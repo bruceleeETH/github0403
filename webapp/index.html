@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>公众号作者跟踪台</title>
+    <link rel="stylesheet" href="/app.css" />
+</head>
+
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">WeChat Author Tracker</p>
+                <h1>公众号作者跟踪台</h1>
+                <p class="hero-copy">抓取公众号文章到本地，自动生成 Markdown、离线页面和基础观点分析，方便持续跟踪作者看法。</p>
+            </div>
+            <form id="fetch-form" class="fetch-card">
+                <label for="article-url">公众号文章链接</label>
+                <input id="article-url" name="url" type="url" placeholder="https://mp.weixin.qq.com/s/..." required
+                    autocomplete="off" list="url-history" />
+                <datalist id="url-history"></datalist>
+                <button type="submit">抓取并分析</button>
+                <p id="fetch-status" class="status"></p>
+            </form>
+        </header>
+
+        <main class="content-grid">
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>作者列表</h2>
+                    <span id="author-count" class="panel-count"></span>
+                </div>
+                <div id="authors" class="author-list"></div>
+            </section>
+
+            <section class="panel panel-wide">
+                <div class="panel-head">
+                    <h2>文章列表</h2>
+                    <span id="article-count" class="panel-count"></span>
+                </div>
+                <div id="articles" class="article-list"></div>
+            </section>
+
+            <section id="account-browse-panel" class="panel panel-wide detail-panel" hidden>
+                <div class="panel-head">
+                    <h2 id="account-browse-title">公众号文章列表</h2>
+                    <div class="panel-head-actions">
+                        <span id="account-browse-status" class="panel-count"></span>
+                        <button type="button" id="account-browse-close" class="panel-close-btn">关闭 ✕</button>
+                    </div>
+                </div>
+                <div id="account-article-list" class="account-article-list"></div>
+                <div id="account-browse-footer" class="account-browse-footer" hidden>
+                    <label class="select-all-label">
+                        <input type="checkbox" id="select-all-articles" /> 全选
+                    </label>
+                    <button type="button" id="batch-fetch-btn" class="action-btn batch-fetch-btn">抓取选中文章（0）</button>
+                    <span id="batch-fetch-status" class="status"></span>
+                </div>
+            </section>
+
+            <section class="panel panel-wide detail-panel">
+                <div class="panel-head">
+                    <h2>文章详情</h2>
+                </div>
+                <div id="article-detail" class="detail-empty">选择一篇文章查看摘要、观点、Markdown 和离线页面入口。</div>
+            </section>
+        </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+</body>
+
+</html>

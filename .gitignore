@@ -1,0 +1,28 @@
+# 依赖
+node_modules/
+
+# Rust 构建产物
+src-tauri/target/
+src-tauri/gen/
+
+# 文章数据（本地抓取内容，不入库）
+wechat_articles/
+wechat_articles_puppeteer/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# 日志
+*.log
+npm-debug.log*
+
+# 环境变量
+.env
+.env.local
