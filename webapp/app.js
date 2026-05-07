@@ -1,7 +1,10 @@
 import {
   BATCH_LINK_LIMIT,
+  DETAIL_PANE_WIDTH_KEY,
+  clampDetailPaneWidth,
   escapeHtml,
   filterArticles,
+  getDetailPaneBounds,
   getArticleDateKey,
   parseBatchLinks,
 } from "./research-utils.mjs";
@@ -33,6 +36,8 @@ const els = {
   articleCount: document.querySelector("#article-count"),
   articles: document.querySelector("#articles"),
   detail: document.querySelector("#article-detail"),
+  detailResizer: document.querySelector("#detail-resizer"),
+  shell: document.querySelector(".research-shell"),
   rangeTabs: document.querySelectorAll(".range-tab"),
 };
 
@@ -270,6 +275,79 @@ function renderAll() {
   renderQueue();
 }
 
+function setDetailPaneWidth(width, persist = false) {
+  const nextWidth = clampDetailPaneWidth(width, window.innerWidth);
+  const bounds = getDetailPaneBounds(window.innerWidth);
+  if (!bounds.enabled) {
+    els.shell.style.removeProperty("--detail-pane-width");
+    return;
+  }
+  els.shell.style.setProperty("--detail-pane-width", `${nextWidth}px`);
+  els.detailResizer.setAttribute("aria-valuemin", String(bounds.min));
+  els.detailResizer.setAttribute("aria-valuemax", String(bounds.max));
+  els.detailResizer.setAttribute("aria-valuenow", String(nextWidth));
+  if (persist) localStorage.setItem(DETAIL_PANE_WIDTH_KEY, String(nextWidth));
+}
+
+function restoreDetailPaneWidth() {
+  const stored = localStorage.getItem(DETAIL_PANE_WIDTH_KEY);
+  setDetailPaneWidth(stored || getDetailPaneBounds(window.innerWidth).defaultWidth);
+}
+
+function setupDetailResizer() {
+  let dragStartX = 0;
+  let startWidth = 0;
+
+  const stopDragging = () => {
+    document.body.classList.remove("is-resizing-detail");
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", stopDragging);
+  };
+
+  function onPointerMove(event) {
+    const nextWidth = startWidth - (event.clientX - dragStartX);
+    setDetailPaneWidth(nextWidth, true);
+  }
+
+  els.detailResizer.addEventListener("pointerdown", (event) => {
+    if (!getDetailPaneBounds(window.innerWidth).enabled) return;
+    event.preventDefault();
+    dragStartX = event.clientX;
+    startWidth = Number.parseInt(getComputedStyle(els.shell).getPropertyValue("--detail-pane-width"), 10)
+      || getDetailPaneBounds(window.innerWidth).defaultWidth;
+    document.body.classList.add("is-resizing-detail");
+    els.detailResizer.setPointerCapture?.(event.pointerId);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", stopDragging);
+  });
+
+  els.detailResizer.addEventListener("keydown", (event) => {
+    if (!getDetailPaneBounds(window.innerWidth).enabled) return;
+    const current = Number(els.detailResizer.getAttribute("aria-valuenow")) || getDetailPaneBounds(window.innerWidth).defaultWidth;
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      setDetailPaneWidth(current + 24, true);
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      setDetailPaneWidth(current - 24, true);
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      setDetailPaneWidth(getDetailPaneBounds(window.innerWidth).min, true);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      setDetailPaneWidth(getDetailPaneBounds(window.innerWidth).max, true);
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    const current = localStorage.getItem(DETAIL_PANE_WIDTH_KEY) || getDetailPaneBounds(window.innerWidth).defaultWidth;
+    setDetailPaneWidth(current);
+  });
+}
+
 async function selectArticle(articleId) {
   if (!articleId) return;
   state.selectedArticleId = articleId;
@@ -390,6 +468,9 @@ els.rangeTabs.forEach((button) => {
     else renderEmptyDetail("当前日期范围内没有文章。");
   });
 });
+
+restoreDetailPaneWidth();
+setupDetailResizer();
 
 refreshAll().catch((error) => {
   renderEmptyDetail(`初始化失败：${error.message}`);

@@ -45,8 +45,8 @@
                 </div>
 
                 <label class="field-label" for="batch-links">文章链接</label>
-                <textarea id="batch-links" class="batch-input" rows="6"
-                    placeholder="https://mp.weixin.qq.com/s/..." spellcheck="false"></textarea>
+                <textarea id="batch-links" class="batch-input" rows="6" placeholder="https://mp.weixin.qq.com/s/..."
+                    spellcheck="false"></textarea>
 
                 <div class="batch-actions">
                     <button id="parse-links-btn" class="secondary-btn" type="button">解析链接</button>
@@ -76,6 +76,9 @@
                 <div id="articles" class="article-list" aria-live="polite"></div>
             </section>
         </main>
+
+        <button id="detail-resizer" class="detail-resizer" type="button" aria-label="调整文章详情宽度"
+            aria-orientation="vertical" aria-valuemin="340" aria-valuemax="760" aria-valuenow="460"></button>
 
         <aside class="detail-pane" aria-label="文章详情">
             <div class="pane-title-row detail-heading">

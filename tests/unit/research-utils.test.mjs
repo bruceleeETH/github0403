@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterArticles, parseBatchLinks } from "../../webapp/research-utils.mjs";
+import { clampDetailPaneWidth, filterArticles, getDetailPaneBounds, parseBatchLinks } from "../../webapp/research-utils.mjs";
 
 test("parseBatchLinks validates, deduplicates, marks existing links, and enforces max count", () => {
     const existing = ["https://mp.weixin.qq.com/s/saved"];
@@ -29,4 +29,11 @@ test("filterArticles supports today, yesterday, 7d, all, and author filters", ()
     assert.deepEqual(filterArticles(articles, { range: "yesterday", now }).map((a) => a.article_id), ["yesterday"]);
     assert.deepEqual(filterArticles(articles, { range: "7d", now }).map((a) => a.article_id), ["today", "yesterday", "week"]);
     assert.deepEqual(filterArticles(articles, { range: "all", author: "作者甲", now }).map((a) => a.article_id), ["today", "yesterday", "old"]);
+});
+
+test("clampDetailPaneWidth keeps the detail pane within desktop layout bounds", () => {
+    assert.equal(clampDetailPaneWidth(100, 1440), 340);
+    assert.equal(clampDetailPaneWidth(2000, 1440), 672);
+    assert.equal(clampDetailPaneWidth("bad", 1440), 460);
+    assert.equal(getDetailPaneBounds(900).enabled, false);
 });

@@ -1,4 +1,5 @@
 export const BATCH_LINK_LIMIT = 20;
+export const DETAIL_PANE_WIDTH_KEY = "wechat_detail_pane_width";
 
 export function isWeChatArticleUrl(value) {
   try {
@@ -111,4 +112,27 @@ export function filterArticles(articles, { range = "all", author = "", now = new
       return true;
     })
     .sort((left, right) => String(right.publish_time || "").localeCompare(String(left.publish_time || "")));
+}
+
+export function getDetailPaneBounds(viewportWidth) {
+  if (viewportWidth <= 980) {
+    return { enabled: false, min: 0, max: 0, defaultWidth: 0 };
+  }
+  const sideWidth = viewportWidth <= 1180 ? 250 : 280;
+  const workspaceMin = viewportWidth <= 1180 ? 440 : 480;
+  const splitterWidth = 8;
+  const min = 340;
+  const preferredMax = 760;
+  const maxByViewport = viewportWidth - sideWidth - workspaceMin - splitterWidth;
+  const max = Math.max(min, Math.min(preferredMax, maxByViewport));
+  const defaultWidth = Math.min(max, Math.max(min, viewportWidth <= 1180 ? 380 : 460));
+  return { enabled: true, min, max, defaultWidth };
+}
+
+export function clampDetailPaneWidth(width, viewportWidth) {
+  const bounds = getDetailPaneBounds(viewportWidth);
+  if (!bounds.enabled) return bounds.defaultWidth;
+  const numericWidth = Number(width);
+  if (!Number.isFinite(numericWidth)) return bounds.defaultWidth;
+  return Math.min(bounds.max, Math.max(bounds.min, Math.round(numericWidth)));
 }
