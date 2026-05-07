@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeAuthorName, normalizeIndexRecords } from "../../src/storage/article-index.mjs";
+import { cleanAuthorName, normalizeAuthorName, normalizeIndexRecords } from "../../src/storage/article-index.mjs";
+
+test("cleanAuthorName collapses repeated author text from real WeChat pages", () => {
+    assert.equal(cleanAuthorName("五老板\n                    五老板", "盘口逻辑拆解", "2026年5月6日"), "五老板");
+});
 
 test("normalizeAuthorName falls back to account when author is empty or date-like", () => {
     assert.equal(normalizeAuthorName("", "公众号", "2026年5月7日"), "公众号");
@@ -36,4 +40,3 @@ test("normalizeIndexRecords deduplicates and keeps richer records", () => {
     assert.equal(records[0].title, "新");
     assert.equal(records[0].author, "作者");
 });
-

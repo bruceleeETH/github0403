@@ -4,13 +4,24 @@ import { INDEX_FILE_NAME } from "../config/constants.mjs";
 import { ensureTrailingNewline } from "../utils/text.mjs";
 import { ensureDir } from "./paths.mjs";
 
-export function normalizeAuthorName(author, account, publishTime) {
-    const candidate = String(author || "").trim();
-    if (!candidate) return account || "";
-    if (candidate === account) return candidate;
-    if (candidate === publishTime) return account || candidate;
-    if (/\d{4}\D+\d{1,2}\D+\d{1,2}/.test(candidate)) return account || candidate;
+export function cleanAuthorName(author, account = "", publishTime = "") {
+    const fallback = String(account || "").replace(/\s+/g, " ").trim();
+    let candidate = String(author || "").replace(/\s+/g, " ").trim();
+    if (!candidate) return fallback;
+
+    const parts = candidate.split(" ").filter(Boolean);
+    if (parts.length > 1 && parts.every((part) => part === parts[0])) {
+        candidate = parts[0];
+    }
+
+    if (candidate === fallback) return candidate;
+    if (candidate === String(publishTime || "").replace(/\s+/g, " ").trim()) return fallback || candidate;
+    if (/\d{4}\D+\d{1,2}\D+\d{1,2}/.test(candidate)) return fallback || candidate;
     return candidate;
+}
+
+export function normalizeAuthorName(author, account, publishTime) {
+    return cleanAuthorName(author, account, publishTime);
 }
 
 export function normalizeIndexRecord(record) {
@@ -91,4 +102,3 @@ export function upsertIndexRecord(indexPath, record) {
     fs.writeFileSync(tmpPath, ensureTrailingNewline(output), "utf-8");
     fs.renameSync(tmpPath, indexPath);
 }
-

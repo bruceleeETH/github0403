@@ -1,190 +1,286 @@
-const HISTORY_KEY = "wechat_url_history";
-const HISTORY_MAX = 30;
-
-function loadUrlHistory() {
-  try {
-    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveUrlToHistory(url) {
-  const history = loadUrlHistory().filter((u) => u !== url);
-  history.unshift(url);
-  localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, HISTORY_MAX)));
-  renderUrlHistory();
-}
-
-function renderUrlHistory() {
-  const datalist = document.querySelector("#url-history");
-  if (!datalist) return;
-  datalist.innerHTML = loadUrlHistory()
-    .map((u) => `<option value="${u.replace(/"/g, "&quot;")}"></option>`)
-    .join("");
-}
+import {
+  BATCH_LINK_LIMIT,
+  escapeHtml,
+  filterArticles,
+  getArticleDateKey,
+  parseBatchLinks,
+} from "./research-utils.mjs";
 
 const state = {
   articles: [],
   authors: [],
+  queue: [],
+  queueOverLimit: false,
+  selectedAuthor: "",
   selectedArticleId: "",
-  browseSourceUrl: "",
+  dateRange: "today",
+  isFetching: false,
 };
 
 const els = {
-  form: document.querySelector("#fetch-form"),
-  input: document.querySelector("#article-url"),
-  status: document.querySelector("#fetch-status"),
+  authorSearch: document.querySelector("#author-search"),
+  allAuthorsBtn: document.querySelector("#all-authors-btn"),
+  totalArticleCount: document.querySelector("#total-article-count"),
   authorCount: document.querySelector("#author-count"),
-  articleCount: document.querySelector("#article-count"),
   authors: document.querySelector("#authors"),
+  batchLinks: document.querySelector("#batch-links"),
+  linkCounter: document.querySelector("#link-counter"),
+  parseLinksBtn: document.querySelector("#parse-links-btn"),
+  startFetchBtn: document.querySelector("#start-fetch-btn"),
+  batchStatus: document.querySelector("#batch-status"),
+  queueList: document.querySelector("#queue-list"),
+  activeFilter: document.querySelector("#active-filter"),
+  articleCount: document.querySelector("#article-count"),
   articles: document.querySelector("#articles"),
   detail: document.querySelector("#article-detail"),
-  browsePanel: document.querySelector("#account-browse-panel"),
-  browseTitleEl: document.querySelector("#account-browse-title"),
-  browseStatus: document.querySelector("#account-browse-status"),
-  browseClose: document.querySelector("#account-browse-close"),
-  browseList: document.querySelector("#account-article-list"),
-  browseFooter: document.querySelector("#account-browse-footer"),
-  selectAll: document.querySelector("#select-all-articles"),
-  batchFetchBtn: document.querySelector("#batch-fetch-btn"),
-  batchStatus: document.querySelector("#batch-fetch-status"),
+  rangeTabs: document.querySelectorAll(".range-tab"),
+};
+
+const statusLabels = {
+  pending: "等待中",
+  invalid: "无效",
+  duplicate: "重复",
+  existing: "已存在",
+  running: "抓取中",
+  success: "已完成",
+  failed: "失败",
 };
 
 async function fetchJson(url, options) {
   const resp = await fetch(url, options);
   const data = await resp.json();
-  if (!resp.ok) {
-    throw new Error(data.error || "请求失败");
-  }
+  if (!resp.ok) throw new Error(data.error || "请求失败");
   return data;
 }
 
-function renderAuthors() {
-  els.authorCount.textContent = `${state.authors.length} 位作者`;
-  els.authors.innerHTML = state.authors
-    .map((author) => {
-      const sourceUrl = state.articles.find(
-        (a) => (a.author === author.author || a.account === author.author) && a.source_url
-      )?.source_url || "";
-      return `
-      <article class="author-card">
-        <h3>${author.author}</h3>
-        <p class="meta-line">文章数：${author.article_count}</p>
-        <p class="meta-line">最近发布时间：${author.latest_publish_time || ""}</p>
-        <p class="keyword-line">高频关键词：${(author.top_keywords || []).join("、") || "暂无"}</p>
-        <p class="meta-line">情绪分布：正向 ${author.sentiments.positive} / 中性 ${author.sentiments.neutral} / 负向 ${author.sentiments.negative}</p>
-        ${sourceUrl ? `<button type="button" class="action-btn browse-account-btn" data-source-url="${sourceUrl.replace(/"/g, '&quot;')}" data-author="${author.author.replace(/"/g, '&quot;')}">浏览全部文章</button>` : ""}
-      </article>
-    `;
-    })
-    .join("");
+function setBatchStatus(message, tone = "") {
+  els.batchStatus.textContent = message;
+  els.batchStatus.dataset.tone = tone;
+}
 
-  els.authors.querySelectorAll(".browse-account-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      openAccountBrowse(btn.dataset.sourceUrl, btn.dataset.author);
+function getExistingUrls() {
+  return new Set(state.articles.map((article) => article.source_url).filter(Boolean));
+}
+
+function getFilteredArticles() {
+  return filterArticles(state.articles, {
+    range: state.dateRange,
+    author: state.selectedAuthor,
+  });
+}
+
+function renderAuthors() {
+  const query = els.authorSearch.value.trim().toLowerCase();
+  const authors = state.authors.filter((author) => {
+    const haystack = `${author.author || ""} ${(author.accounts || []).join(" ")}`.toLowerCase();
+    return !query || haystack.includes(query);
+  });
+
+  els.totalArticleCount.textContent = String(state.articles.length);
+  els.authorCount.textContent = `${authors.length} 位`;
+  els.allAuthorsBtn.classList.toggle("active", state.selectedAuthor === "");
+
+  if (authors.length === 0) {
+    els.authors.innerHTML = `<div class="empty-state compact">暂无博主，先批量抓取文章。</div>`;
+    return;
+  }
+
+  els.authors.innerHTML = authors.map((author) => {
+    const active = state.selectedAuthor === author.author;
+    const sentiments = author.sentiments || { positive: 0, neutral: 0, negative: 0 };
+    return `
+      <button class="author-row${active ? " active" : ""}" type="button" data-author="${escapeHtml(author.author)}">
+        <span class="author-row-main">
+          <strong>${escapeHtml(author.author)}</strong>
+          <span>${escapeHtml(author.latest_publish_time || "暂无时间")}</span>
+        </span>
+        <span class="author-row-meta">
+          <span>${author.article_count || 0} 篇</span>
+          <span>正 ${sentiments.positive || 0} / 中 ${sentiments.neutral || 0} / 负 ${sentiments.negative || 0}</span>
+        </span>
+        <span class="keyword-strip">${escapeHtml((author.top_keywords || []).slice(0, 4).join("、") || "暂无关键词")}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.authors.querySelectorAll(".author-row").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedAuthor = button.dataset.author || "";
+      state.selectedArticleId = "";
+      renderAll();
+      const first = getFilteredArticles()[0];
+      if (first) selectArticle(first.article_id);
+      else renderEmptyDetail("该博主在当前日期范围内没有文章。");
     });
   });
 }
 
 function renderArticles() {
-  els.articleCount.textContent = `${state.articles.length} 篇文章`;
-  els.articles.innerHTML = state.articles
-    .map((article) => `
-      <article class="article-card">
-        <h3>${article.title}</h3>
-        <p class="meta-line">作者：${article.author || article.account || ""}</p>
-        <p class="meta-line">发布时间：${article.publish_time || ""}</p>
-        <p class="keyword-line">关键词：${(article.keywords || []).join("、") || "暂无"}</p>
-        <button type="button" data-article-id="${article.article_id}">查看详情</button>
-      </article>
-    `)
-    .join("");
+  const articles = getFilteredArticles();
+  els.articleCount.textContent = `${articles.length} 篇`;
+  els.activeFilter.textContent = state.selectedAuthor ? `当前博主：${state.selectedAuthor}` : "全部博主";
 
-  els.articles.querySelectorAll("button[data-article-id]").forEach((button) => {
+  if (articles.length === 0) {
+    els.articles.innerHTML = `<div class="empty-state">当前筛选下没有文章。</div>`;
+    return;
+  }
+
+  let lastDate = "";
+  els.articles.innerHTML = articles.map((article) => {
+    const dateKey = getArticleDateKey(article) || "未识别日期";
+    const dateHeader = dateKey !== lastDate ? `<div class="date-divider">${escapeHtml(dateKey)}</div>` : "";
+    lastDate = dateKey;
+    const active = state.selectedArticleId === article.article_id;
+    return `
+      ${dateHeader}
+      <button class="article-row${active ? " active" : ""}" type="button" data-article-id="${escapeHtml(article.article_id)}">
+        <span class="article-row-title">${escapeHtml(article.title || "未命名文章")}</span>
+        <span class="article-row-meta">
+          <span>${escapeHtml(article.author || article.account || "未知作者")}</span>
+          <span>${escapeHtml(article.publish_time || "")}</span>
+        </span>
+        <span class="article-row-keywords">${escapeHtml((article.keywords || []).slice(0, 5).join("、") || "暂无关键词")}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.articles.querySelectorAll(".article-row").forEach((button) => {
     button.addEventListener("click", () => selectArticle(button.dataset.articleId));
   });
 }
 
+function renderQueue() {
+  const actionableCount = state.queue.filter((item) => item.status === "pending").length;
+  const lineCount = els.batchLinks.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
+  els.linkCounter.textContent = `${lineCount} / ${BATCH_LINK_LIMIT}`;
+  els.linkCounter.dataset.tone = state.queueOverLimit ? "danger" : "";
+  els.startFetchBtn.disabled = state.isFetching || state.queueOverLimit || actionableCount === 0;
+
+  if (state.queue.length === 0) {
+    els.queueList.innerHTML = `<div class="empty-state compact">解析后会在这里显示抓取队列。</div>`;
+    return;
+  }
+
+  els.queueList.innerHTML = state.queue.map((item, index) => `
+    <div class="queue-row" data-status="${item.status}">
+      <span class="queue-index">${index + 1}</span>
+      <span class="status-badge" data-status="${item.status}">${statusLabels[item.status] || item.status}</span>
+      <span class="queue-main">
+        <strong>${escapeHtml(item.title || item.url)}</strong>
+        <span>${escapeHtml(item.message || [item.author, item.account, item.publish_time].filter(Boolean).join(" / "))}</span>
+      </span>
+    </div>
+  `).join("");
+}
+
+function renderEmptyDetail(message) {
+  els.detail.innerHTML = `<div class="detail-empty">${escapeHtml(message)}</div>`;
+}
+
 function renderDetail(detail) {
+  const meta = detail.meta || {};
+  const analysis = detail.analysis || {};
+  const viewpoints = analysis.viewpoints || [];
+  const keywords = analysis.keywords || [];
+
   els.detail.innerHTML = `
-    <div class="detail-block">
-      <h3 class="detail-title">${detail.meta.title}</h3>
-      <p class="meta-line">作者：${detail.meta.author || detail.meta.account || ""}</p>
-      <p class="meta-line">发布时间：${detail.meta.publishTime || ""}</p>
-      <div class="pill-row">
-        ${(detail.analysis.keywords || []).map((item) => `<span class="pill">${item}</span>`).join("")}
-      </div>
-    </div>
-    <div class="detail-block">
-      <h4>自动分析</h4>
-      <p class="meta-line">摘要：${detail.analysis.summary || ""}</p>
-      <p class="meta-line">情绪：${detail.analysis.sentiment || "neutral"}</p>
-    </div>
-    <div class="detail-block">
-      <h4>核心观点</h4>
-      <div class="viewpoint-list">
-        ${(detail.analysis.viewpoints || []).map((item) => `
-          <div class="viewpoint-item">
-            <strong>${item.id}</strong>
-            <p>${item.text}</p>
-            <p class="meta-line">关键词：${(item.keywords || []).join("、") || "暂无"}</p>
-          </div>
-        `).join("")}
-      </div>
-    </div>
-    <div class="detail-block">
-      <h4>文件入口</h4>
-      <div class="link-row">
-        <button type="button" class="action-btn" data-offline-url="${detail.offline_html_url}">打开离线页面</button>
-        <button type="button" class="action-btn" id="share-article-btn" data-article-id="${detail.meta.articleId || state.selectedArticleId}">分享文章</button>
-      </div>
-      <div id="offline-frame-wrap" class="offline-frame-wrap" hidden>
-        <div class="offline-frame-toolbar">
-          <span class="offline-frame-title">离线页面</span>
-          <button type="button" class="frame-close-btn" id="close-offline-frame">关闭 ✕</button>
+    <article class="detail-content">
+      <header class="detail-title-block">
+        <span class="sentiment-tag" data-sentiment="${escapeHtml(analysis.sentiment || "neutral")}">${escapeHtml(analysis.sentiment || "neutral")}</span>
+        <h3>${escapeHtml(meta.title || detail.title || "未命名文章")}</h3>
+        <p>${escapeHtml(meta.author || meta.account || detail.author || "未知作者")} · ${escapeHtml(meta.publishTime || detail.publish_time || "")}</p>
+      </header>
+
+      <section class="detail-section">
+        <h4>关键词</h4>
+        <div class="pill-row">
+          ${keywords.length ? keywords.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("") : "<span class=\"muted-text\">暂无关键词</span>"}
         </div>
-        <iframe id="offline-frame" class="offline-frame" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>
-      </div>
-    </div>
-    ${detail.image_urls && detail.image_urls.length ? `
-    <div class="detail-block">
-      <h4>文章图片（${detail.image_urls.length} 张）</h4>
-      <div class="image-gallery">
-        ${detail.image_urls.map((url, i) => `<img class="gallery-img" src="${url}" alt="图片${i + 1}" loading="lazy" />`).join("")}
-      </div>
-    </div>
-    ` : ""}
-    <div class="detail-block">
-      <h4>Markdown</h4>
-      <div class="markdown-box">${detail.markdown.replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char]))}</div>
-    </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>自动摘要</h4>
+        <p>${escapeHtml(analysis.summary || "暂无摘要")}</p>
+      </section>
+
+      <section class="detail-section">
+        <h4>核心观点</h4>
+        <div class="viewpoint-list">
+          ${viewpoints.length ? viewpoints.map((item) => `
+            <div class="viewpoint-item">
+              <strong>${escapeHtml(item.id)}</strong>
+              <p>${escapeHtml(item.text)}</p>
+            </div>
+          `).join("") : "<p class=\"muted-text\">暂无观点片段</p>"}
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>文件入口</h4>
+        <div class="link-row">
+          <button type="button" class="secondary-btn" data-offline-url="${escapeHtml(detail.offline_html_url || "")}">离线 HTML</button>
+          <button type="button" class="secondary-btn" id="share-article-btn" data-article-id="${escapeHtml(meta.articleId || detail.article_id || "")}">分享页面</button>
+        </div>
+        <div id="offline-frame-wrap" class="offline-frame-wrap" hidden>
+          <div class="offline-frame-toolbar">
+            <span>离线页面</span>
+            <button type="button" id="close-offline-frame">关闭</button>
+          </div>
+          <iframe id="offline-frame" class="offline-frame" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>
+        </div>
+      </section>
+
+      ${detail.image_urls?.length ? `
+        <section class="detail-section">
+          <h4>图片 ${detail.image_urls.length} 张</h4>
+          <div class="image-gallery">
+            ${detail.image_urls.map((url, index) => `<img src="${escapeHtml(url)}" alt="文章图片 ${index + 1}" loading="lazy" />`).join("")}
+          </div>
+        </section>
+      ` : ""}
+
+      <section class="detail-section">
+        <h4>Markdown</h4>
+        <pre class="markdown-box">${escapeHtml(detail.markdown || "")}</pre>
+      </section>
+    </article>
   `;
 
-  const offlineFrameWrap = els.detail.querySelector("#offline-frame-wrap");
-  const offlineFrame = els.detail.querySelector("#offline-frame");
-
-  els.detail.querySelector("[data-offline-url]")?.addEventListener("click", (e) => {
-    offlineFrame.src = e.currentTarget.dataset.offlineUrl;
-    offlineFrameWrap.hidden = false;
-    offlineFrameWrap.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const frameWrap = els.detail.querySelector("#offline-frame-wrap");
+  const frame = els.detail.querySelector("#offline-frame");
+  els.detail.querySelector("[data-offline-url]")?.addEventListener("click", (event) => {
+    const url = event.currentTarget.dataset.offlineUrl;
+    if (!url) return;
+    frame.src = url;
+    frameWrap.hidden = false;
   });
-
   els.detail.querySelector("#close-offline-frame")?.addEventListener("click", () => {
-    offlineFrameWrap.hidden = true;
-    offlineFrame.src = "";
+    frameWrap.hidden = true;
+    frame.src = "";
   });
-
-  els.detail.querySelector("#share-article-btn")?.addEventListener("click", (e) => {
-    const articleId = e.currentTarget.dataset.articleId;
-    window.open(`/api/articles/${encodeURIComponent(articleId)}/share`, "_blank");
+  els.detail.querySelector("#share-article-btn")?.addEventListener("click", (event) => {
+    const articleId = event.currentTarget.dataset.articleId;
+    if (articleId) window.open(`/api/articles/${encodeURIComponent(articleId)}/share`, "_blank");
   });
 }
 
+function renderAll() {
+  renderAuthors();
+  renderArticles();
+  renderQueue();
+}
+
 async function selectArticle(articleId) {
+  if (!articleId) return;
   state.selectedArticleId = articleId;
-  const detail = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}`);
-  renderDetail(detail);
+  renderArticles();
+  els.detail.innerHTML = `<div class="detail-empty">正在加载文章详情...</div>`;
+  try {
+    const detail = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}`);
+    renderDetail(detail);
+  } catch (error) {
+    renderEmptyDetail(`加载失败：${error.message}`);
+  }
 }
 
 async function refreshAll() {
@@ -194,150 +290,107 @@ async function refreshAll() {
   ]);
   state.articles = articles;
   state.authors = authors;
-  renderAuthors();
-  renderArticles();
+  renderAll();
 
-  if (!state.selectedArticleId && state.articles[0]) {
-    await selectArticle(state.articles[0].article_id);
+  if (!state.selectedArticleId) {
+    const first = getFilteredArticles()[0];
+    if (first) await selectArticle(first.article_id);
   }
 }
 
-els.form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  els.status.textContent = "正在抓取并分析，请稍候...";
-  const url = els.input.value.trim();
-  try {
-    const result = await fetchJson("/api/fetch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    saveUrlToHistory(url);
-    els.status.textContent = `抓取完成：${result.title}`;
-    els.input.value = "";
-    await refreshAll();
-    if (result.article_id) {
-      await selectArticle(result.article_id);
-    }
-  } catch (error) {
-    els.status.textContent = `失败：${error.message}`;
+function parseQueueFromInput() {
+  const parsed = parseBatchLinks(els.batchLinks.value, getExistingUrls());
+  state.queue = parsed.items;
+  state.queueOverLimit = parsed.overLimit;
+
+  if (parsed.overLimit) {
+    setBatchStatus(`一次最多支持 ${parsed.limit} 个链接，请删减后再抓取。`, "danger");
+  } else {
+    const pending = state.queue.filter((item) => item.status === "pending").length;
+    setBatchStatus(pending ? `可抓取 ${pending} 篇。` : "没有可抓取的新链接。", pending ? "" : "muted");
   }
-});
-
-// ── Account Browse ────────────────────────────────────────────────────────────
-
-function getCheckedUrls() {
-  return [...els.browseList.querySelectorAll("input[type=checkbox]:checked")].map((cb) => cb.value);
+  renderQueue();
 }
 
-function updateBatchCount() {
-  const n = getCheckedUrls().length;
-  els.batchFetchBtn.textContent = `抓取选中文章（${n}）`;
-  els.batchFetchBtn.disabled = n === 0;
-}
+async function runFetchQueue() {
+  parseQueueFromInput();
+  if (state.queueOverLimit || state.queue.every((item) => item.status !== "pending")) return;
 
-async function openAccountBrowse(sourceUrl, authorName) {
-  state.browseSourceUrl = sourceUrl;
-  els.browseTitleEl.textContent = `公众号文章列表 — ${authorName}`;
-  els.browseStatus.textContent = "正在加载，请稍候…";
-  els.browseList.innerHTML = "<p class=\"browse-loading\">正在用 Puppeteer 抓取文章列表，可能需要 30 秒…</p>";
-  els.browseFooter.hidden = true;
-  els.browsePanel.hidden = false;
-  els.browsePanel.scrollIntoView({ behavior: "smooth", block: "start" });
+  state.isFetching = true;
+  renderQueue();
+  let lastArticleId = "";
+  let successCount = 0;
+  let failCount = 0;
 
-  try {
-    const data = await fetchJson(`/api/account-articles?source_url=${encodeURIComponent(sourceUrl)}`);
-    const items = data.items || [];
-    if (items.length === 0) {
-      els.browseList.innerHTML = "<p class=\"browse-empty\">未找到文章，或该公众号需要登录才能查看历史。</p>";
-      els.browseStatus.textContent = "";
-      return;
-    }
+  for (const item of state.queue) {
+    if (item.status !== "pending") continue;
+    item.status = "running";
+    item.message = "正在抓取并分析";
+    renderQueue();
 
-    const existingUrls = new Set(state.articles.map((a) => a.source_url));
-    els.browseStatus.textContent = `共 ${items.length} 篇`;
-    els.browseList.innerHTML = items
-      .map((item, i) => {
-        const alreadySaved = existingUrls.has(item.url);
-        return `
-        <label class="account-article-item${alreadySaved ? " already-saved" : ""}">
-          <input type="checkbox" value="${item.url.replace(/"/g, "&quot;")}" ${alreadySaved ? "disabled" : ""} />
-          <span class="aa-title">${item.title}</span>
-          <span class="aa-date">${item.publishTime || ""}</span>
-          ${alreadySaved ? "<span class=\"aa-badge\">已保存</span>" : ""}
-        </label>`;
-      })
-      .join("");
-
-    els.browseList.querySelectorAll("input[type=checkbox]").forEach((cb) => {
-      cb.addEventListener("change", () => {
-        els.selectAll.checked =
-          [...els.browseList.querySelectorAll("input[type=checkbox]:not(:disabled)")].every((c) => c.checked);
-        updateBatchCount();
+    try {
+      const result = await fetchJson("/api/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: item.url }),
       });
-    });
-
-    els.selectAll.checked = false;
-    updateBatchCount();
-    els.browseFooter.hidden = false;
-  } catch (err) {
-    els.browseList.innerHTML = `<p class="browse-empty">加载失败：${err.message}</p>`;
-    els.browseStatus.textContent = "";
+      item.status = "success";
+      item.title = result.title || item.url;
+      item.author = result.author || "";
+      item.account = result.account || "";
+      item.publish_time = result.publish_time || "";
+      item.article_id = result.article_id || "";
+      item.message = "抓取完成";
+      lastArticleId = result.article_id || lastArticleId;
+      successCount += 1;
+      await refreshAll();
+    } catch (error) {
+      item.status = "failed";
+      item.message = error.message || "抓取失败";
+      failCount += 1;
+    }
+    renderQueue();
   }
+
+  state.isFetching = false;
+  setBatchStatus(`抓取完成：${successCount} 篇成功${failCount ? `，${failCount} 篇失败` : ""}。`, failCount ? "warning" : "success");
+  await refreshAll();
+  if (lastArticleId) await selectArticle(lastArticleId);
+  renderQueue();
 }
 
-els.browseClose.addEventListener("click", () => {
-  els.browsePanel.hidden = true;
-  els.browseFooter.hidden = true;
-  state.browseSourceUrl = "";
+els.authorSearch.addEventListener("input", renderAuthors);
+
+els.allAuthorsBtn.addEventListener("click", () => {
+  state.selectedAuthor = "";
+  state.selectedArticleId = "";
+  renderAll();
+  const first = getFilteredArticles()[0];
+  if (first) selectArticle(first.article_id);
+  else renderEmptyDetail("当前日期范围内没有文章。");
 });
 
-els.selectAll.addEventListener("change", () => {
-  els.browseList.querySelectorAll("input[type=checkbox]:not(:disabled)").forEach((cb) => {
-    cb.checked = els.selectAll.checked;
+els.batchLinks.addEventListener("input", () => {
+  const lineCount = els.batchLinks.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
+  els.linkCounter.textContent = `${lineCount} / ${BATCH_LINK_LIMIT}`;
+  els.linkCounter.dataset.tone = lineCount > BATCH_LINK_LIMIT ? "danger" : "";
+});
+
+els.parseLinksBtn.addEventListener("click", parseQueueFromInput);
+els.startFetchBtn.addEventListener("click", runFetchQueue);
+
+els.rangeTabs.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.dateRange = button.dataset.range || "all";
+    els.rangeTabs.forEach((tab) => tab.classList.toggle("active", tab === button));
+    state.selectedArticleId = "";
+    renderAll();
+    const first = getFilteredArticles()[0];
+    if (first) selectArticle(first.article_id);
+    else renderEmptyDetail("当前日期范围内没有文章。");
   });
-  updateBatchCount();
 });
 
-els.batchFetchBtn.addEventListener("click", async () => {
-  const urls = getCheckedUrls();
-  if (urls.length === 0) return;
-  els.batchFetchBtn.disabled = true;
-  els.batchStatus.textContent = `正在抓取 ${urls.length} 篇文章，请耐心等待…`;
-
-  try {
-    const data = await fetchJson("/api/batch-fetch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ urls }),
-    });
-    const ok = data.results.filter((r) => r.ok).length;
-    const fail = data.results.length - ok;
-    els.batchStatus.textContent = `完成：${ok} 篇成功${fail > 0 ? `，${fail} 篇失败` : ""}`;
-    // Mark newly saved items
-    data.results.forEach((r) => {
-      if (r.ok) {
-        const cb = els.browseList.querySelector(`input[value="${CSS.escape(r.url)}"]`);
-        if (cb) {
-          cb.disabled = true;
-          cb.checked = false;
-          cb.closest(".account-article-item").classList.add("already-saved");
-          const badge = document.createElement("span");
-          badge.className = "aa-badge";
-          badge.textContent = "已保存";
-          cb.closest(".account-article-item").append(badge);
-        }
-      }
-    });
-    updateBatchCount();
-    await refreshAll();
-  } catch (err) {
-    els.batchStatus.textContent = `批量抓取失败：${err.message}`;
-    els.batchFetchBtn.disabled = false;
-  }
-});
-
-renderUrlHistory();
 refreshAll().catch((error) => {
-  els.status.textContent = `初始化失败：${error.message}`;
+  renderEmptyDetail(`初始化失败：${error.message}`);
 });

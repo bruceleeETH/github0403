@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { DEFAULT_OUTPUT_DIR } from "../src/config/constants.mjs";
 import { captureArticleToLocal } from "../src/core/capture-article.mjs";
 import { listAccountArticles } from "../src/core/list-account-articles.mjs";
-import { loadArticleIndex } from "../src/storage/article-index.mjs";
+import { cleanAuthorName, loadArticleIndex } from "../src/storage/article-index.mjs";
 import { encodeLibraryPath, safeJoin } from "../src/storage/paths.mjs";
 import { isWeChatArticleUrl } from "../src/utils/url.mjs";
 
@@ -51,7 +51,8 @@ function getMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
     switch (ext) {
         case ".html": return "text/html; charset=utf-8";
-        case ".js": return "application/javascript; charset=utf-8";
+        case ".js":
+        case ".mjs": return "application/javascript; charset=utf-8";
         case ".css": return "text/css; charset=utf-8";
         case ".json": return "application/json; charset=utf-8";
         case ".md": return "text/markdown; charset=utf-8";
@@ -100,7 +101,7 @@ function loadArticleDetail(articleId) {
 function buildAuthorSummary(records) {
     const grouped = new Map();
     for (const record of records) {
-        const key = record.author || record.account || "未知作者";
+        const key = cleanAuthorName(record.author, record.account, record.publish_time) || "未知作者";
         if (!grouped.has(key)) {
             grouped.set(key, {
                 author: key,
@@ -195,6 +196,10 @@ async function handleApi(req, res, url) {
                 ok: true,
                 article_id: result.meta.articleId,
                 title: result.meta.title,
+                author: cleanAuthorName(result.meta.author, result.meta.account, result.meta.publishTime),
+                account: result.meta.account,
+                publish_time: result.meta.publishTime,
+                source_url: result.meta.source,
                 article_dir: result.articleDir,
                 markdown_path: result.markdownPath,
                 offline_html_path: result.offlineHtmlPath,
@@ -284,4 +289,3 @@ export function startServer() {
 if (process.argv[1] === __filename) {
     startServer();
 }
-

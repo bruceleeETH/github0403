@@ -4,70 +4,88 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>公众号作者跟踪台</title>
+    <title>财经博主研究台</title>
+    <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/app.css" />
 </head>
 
 <body>
-    <div class="page-shell">
-        <header class="hero">
-            <div>
-                <p class="eyebrow">WeChat Author Tracker</p>
-                <h1>公众号作者跟踪台</h1>
-                <p class="hero-copy">抓取公众号文章到本地，自动生成 Markdown、离线页面和基础观点分析，方便持续跟踪作者看法。</p>
+    <div class="research-shell">
+        <aside class="side-pane" aria-label="财经博主">
+            <header class="pane-header brand-header">
+                <p class="eyebrow">Research Console</p>
+                <h1>财经博主研究台</h1>
+                <p class="subtle">批量保存公众号文章，按作者沉淀每日观点。</p>
+            </header>
+
+            <div class="side-controls">
+                <label class="field-label" for="author-search">搜索博主</label>
+                <input id="author-search" class="text-input" type="search" placeholder="作者或公众号" autocomplete="off" />
+                <button id="all-authors-btn" class="author-filter active" type="button">
+                    <span>全部博主</span>
+                    <strong id="total-article-count">0</strong>
+                </button>
             </div>
-            <form id="fetch-form" class="fetch-card">
-                <label for="article-url">公众号文章链接</label>
-                <input id="article-url" name="url" type="url" placeholder="https://mp.weixin.qq.com/s/..." required
-                    autocomplete="off" list="url-history" />
-                <datalist id="url-history"></datalist>
-                <button type="submit">抓取并分析</button>
-                <p id="fetch-status" class="status"></p>
-            </form>
-        </header>
 
-        <main class="content-grid">
-            <section class="panel">
-                <div class="panel-head">
-                    <h2>作者列表</h2>
-                    <span id="author-count" class="panel-count"></span>
-                </div>
-                <div id="authors" class="author-list"></div>
-            </section>
+            <div class="pane-title-row">
+                <h2>博主列表</h2>
+                <span id="author-count" class="count-label">0 位</span>
+            </div>
+            <div id="authors" class="author-list" aria-live="polite"></div>
+        </aside>
 
-            <section class="panel panel-wide">
-                <div class="panel-head">
-                    <h2>文章列表</h2>
-                    <span id="article-count" class="panel-count"></span>
-                </div>
-                <div id="articles" class="article-list"></div>
-            </section>
-
-            <section id="account-browse-panel" class="panel panel-wide detail-panel" hidden>
-                <div class="panel-head">
-                    <h2 id="account-browse-title">公众号文章列表</h2>
-                    <div class="panel-head-actions">
-                        <span id="account-browse-status" class="panel-count"></span>
-                        <button type="button" id="account-browse-close" class="panel-close-btn">关闭 ✕</button>
+        <main class="workspace-pane" aria-label="批量抓取和每日文章">
+            <section class="ingest-panel" aria-labelledby="batch-title">
+                <div class="pane-title-row">
+                    <div>
+                        <h2 id="batch-title">批量抓取</h2>
+                        <p class="section-note">每行一个微信公众号文章链接，一次最多 20 个。</p>
                     </div>
+                    <span id="link-counter" class="count-label">0 / 20</span>
                 </div>
-                <div id="account-article-list" class="account-article-list"></div>
-                <div id="account-browse-footer" class="account-browse-footer" hidden>
-                    <label class="select-all-label">
-                        <input type="checkbox" id="select-all-articles" /> 全选
-                    </label>
-                    <button type="button" id="batch-fetch-btn" class="action-btn batch-fetch-btn">抓取选中文章（0）</button>
-                    <span id="batch-fetch-status" class="status"></span>
+
+                <label class="field-label" for="batch-links">文章链接</label>
+                <textarea id="batch-links" class="batch-input" rows="6"
+                    placeholder="https://mp.weixin.qq.com/s/..." spellcheck="false"></textarea>
+
+                <div class="batch-actions">
+                    <button id="parse-links-btn" class="secondary-btn" type="button">解析链接</button>
+                    <button id="start-fetch-btn" class="primary-btn" type="button" disabled>开始抓取</button>
+                    <span id="batch-status" class="inline-status"></span>
                 </div>
+
+                <div id="queue-list" class="queue-list" aria-live="polite"></div>
             </section>
 
-            <section class="panel panel-wide detail-panel">
-                <div class="panel-head">
-                    <h2>文章详情</h2>
+            <section class="article-panel" aria-labelledby="daily-title">
+                <div class="pane-title-row article-toolbar">
+                    <div>
+                        <h2 id="daily-title">每日文章</h2>
+                        <p id="active-filter" class="section-note">全部博主</p>
+                    </div>
+                    <span id="article-count" class="count-label">0 篇</span>
                 </div>
-                <div id="article-detail" class="detail-empty">选择一篇文章查看摘要、观点、Markdown 和离线页面入口。</div>
+
+                <div class="range-tabs" role="tablist" aria-label="日期筛选">
+                    <button class="range-tab active" type="button" data-range="today">今天</button>
+                    <button class="range-tab" type="button" data-range="yesterday">昨天</button>
+                    <button class="range-tab" type="button" data-range="7d">近 7 天</button>
+                    <button class="range-tab" type="button" data-range="all">全部</button>
+                </div>
+
+                <div id="articles" class="article-list" aria-live="polite"></div>
             </section>
         </main>
+
+        <aside class="detail-pane" aria-label="文章详情">
+            <div class="pane-title-row detail-heading">
+                <div>
+                    <h2>文章详情</h2>
+                    <p class="section-note">摘要、观点和本地文件入口</p>
+                </div>
+            </div>
+            <div id="article-detail" class="detail-empty">粘贴链接开始抓取，或从每日文章中选择一篇查看。</div>
+        </aside>
     </div>
 
     <script type="module" src="/app.js"></script>
