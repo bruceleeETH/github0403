@@ -481,5 +481,6 @@ P3
 4. 重写 README，只保留 Puppeteer + Web + Tauri 主线
 
 十二、微信公众号测试链接：
-https://mp.weixin.qq.com/s/K8uZU1qr1p-J4V1Dq3c3iw
-https://mp.weixin.qq.com/s/YhpTzm7Lhg8_gqyvVi_clA
+# https://mp.weixin.qq.com/s/K8uZU1qr1p-J4V1Dq3c3iw
+# https://mp.weixin.qq.com/s/YhpTzm7Lhg8_gqyvVi_clA
+https://mp.weixin.qq.com/s/j7F5jdIvOR_eQj09WLVGxQ
