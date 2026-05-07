@@ -24,7 +24,8 @@
             "icons/icon.ico"
         ],
         "resources": [
-            "../server.mjs",
+            "../server",
+            "../src",
             "../save_wechat_article_puppeteer.mjs",
             "../package.json",
             "../package-lock.json",

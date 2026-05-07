@@ -52,7 +52,7 @@ fn wait_for_server() -> Result<(), String> {
 
 fn spawn_server<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<Child, String> {
     let root_dir = resolve_app_root(app)?;
-    let server_script = root_dir.join("server.mjs");
+    let server_script = root_dir.join("server").join("server.mjs");
     if !server_script.exists() {
         return Err(format!("未找到服务入口文件: {}", server_script.display()));
     }
