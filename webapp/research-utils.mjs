@@ -1,5 +1,21 @@
 export const BATCH_LINK_LIMIT = 20;
 export const DETAIL_PANE_WIDTH_KEY = "wechat_detail_pane_width";
+export const DETAIL_PANE_WIDTH_VERSION_KEY = "wechat_detail_pane_width_version";
+export const DETAIL_LAYOUT_CONFIG = Object.freeze({
+  version: "wide-detail-v2",
+  enabledBreakpoint: 980,
+  compactBreakpoint: 1180,
+  sideWidth: 280,
+  compactSideWidth: 250,
+  workspaceMinWidth: 320,
+  compactWorkspaceMinWidth: 320,
+  splitterWidth: 12,
+  minWidth: 420,
+  defaultWidth: 680,
+  compactDefaultWidth: 520,
+  preferredMaxWidth: 1040,
+  step: 80,
+});
 
 export function isWeChatArticleUrl(value) {
   try {
@@ -114,23 +130,24 @@ export function filterArticles(articles, { range = "all", author = "", now = new
     .sort((left, right) => String(right.publish_time || "").localeCompare(String(left.publish_time || "")));
 }
 
-export function getDetailPaneBounds(viewportWidth) {
-  if (viewportWidth <= 980) {
+export function getDetailPaneBounds(viewportWidth, config = DETAIL_LAYOUT_CONFIG) {
+  if (viewportWidth <= config.enabledBreakpoint) {
     return { enabled: false, min: 0, max: 0, defaultWidth: 0 };
   }
-  const sideWidth = viewportWidth <= 1180 ? 250 : 280;
-  const workspaceMin = viewportWidth <= 1180 ? 440 : 480;
-  const splitterWidth = 8;
-  const min = 340;
-  const preferredMax = 760;
+  const isCompact = viewportWidth <= config.compactBreakpoint;
+  const sideWidth = isCompact ? config.compactSideWidth : config.sideWidth;
+  const workspaceMin = isCompact ? config.compactWorkspaceMinWidth : config.workspaceMinWidth;
+  const splitterWidth = config.splitterWidth;
+  const min = config.minWidth;
+  const preferredMax = config.preferredMaxWidth;
   const maxByViewport = viewportWidth - sideWidth - workspaceMin - splitterWidth;
   const max = Math.max(min, Math.min(preferredMax, maxByViewport));
-  const defaultWidth = Math.min(max, Math.max(min, viewportWidth <= 1180 ? 380 : 460));
+  const defaultWidth = Math.min(max, Math.max(min, isCompact ? config.compactDefaultWidth : config.defaultWidth));
   return { enabled: true, min, max, defaultWidth };
 }
 
-export function clampDetailPaneWidth(width, viewportWidth) {
-  const bounds = getDetailPaneBounds(viewportWidth);
+export function clampDetailPaneWidth(width, viewportWidth, config = DETAIL_LAYOUT_CONFIG) {
+  const bounds = getDetailPaneBounds(viewportWidth, config);
   if (!bounds.enabled) return bounds.defaultWidth;
   const numericWidth = Number(width);
   if (!Number.isFinite(numericWidth)) return bounds.defaultWidth;

@@ -1,6 +1,8 @@
 import {
   BATCH_LINK_LIMIT,
+  DETAIL_LAYOUT_CONFIG,
   DETAIL_PANE_WIDTH_KEY,
+  DETAIL_PANE_WIDTH_VERSION_KEY,
   clampDetailPaneWidth,
   escapeHtml,
   filterArticles,
@@ -37,6 +39,9 @@ const els = {
   articles: document.querySelector("#articles"),
   detail: document.querySelector("#article-detail"),
   detailResizer: document.querySelector("#detail-resizer"),
+  detailShrinkBtn: document.querySelector("#detail-shrink-btn"),
+  detailGrowBtn: document.querySelector("#detail-grow-btn"),
+  detailResetBtn: document.querySelector("#detail-reset-btn"),
   shell: document.querySelector(".research-shell"),
   rangeTabs: document.querySelectorAll(".range-tab"),
 };
@@ -236,18 +241,18 @@ function renderDetail(detail) {
       </section>
 
       ${detail.image_urls?.length ? `
-        <section class="detail-section">
-          <h4>图片 ${detail.image_urls.length} 张</h4>
+        <details class="detail-disclosure">
+          <summary>图片 ${detail.image_urls.length} 张</summary>
           <div class="image-gallery">
             ${detail.image_urls.map((url, index) => `<img src="${escapeHtml(url)}" alt="文章图片 ${index + 1}" loading="lazy" />`).join("")}
           </div>
-        </section>
+        </details>
       ` : ""}
 
-      <section class="detail-section">
-        <h4>Markdown</h4>
+      <details class="detail-disclosure">
+        <summary>Markdown</summary>
         <pre class="markdown-box">${escapeHtml(detail.markdown || "")}</pre>
-      </section>
+      </details>
     </article>
   `;
 
@@ -275,6 +280,20 @@ function renderAll() {
   renderQueue();
 }
 
+function applyDetailLayoutConfig() {
+  const root = document.documentElement;
+  const config = DETAIL_LAYOUT_CONFIG;
+  root.style.setProperty("--side-pane-width", `${config.sideWidth}px`);
+  root.style.setProperty("--side-pane-width-compact", `${config.compactSideWidth}px`);
+  root.style.setProperty("--workspace-min-width", `${config.workspaceMinWidth}px`);
+  root.style.setProperty("--workspace-min-width-compact", `${config.compactWorkspaceMinWidth}px`);
+  root.style.setProperty("--resizer-width", `${config.splitterWidth}px`);
+  root.style.setProperty("--detail-pane-min-width", `${config.minWidth}px`);
+  root.style.setProperty("--detail-pane-default-width", `${config.defaultWidth}px`);
+  root.style.setProperty("--detail-pane-default-width-compact", `${config.compactDefaultWidth}px`);
+  root.style.setProperty("--detail-pane-max-width", `${config.preferredMaxWidth}px`);
+}
+
 function setDetailPaneWidth(width, persist = false) {
   const nextWidth = clampDetailPaneWidth(width, window.innerWidth);
   const bounds = getDetailPaneBounds(window.innerWidth);
@@ -286,12 +305,31 @@ function setDetailPaneWidth(width, persist = false) {
   els.detailResizer.setAttribute("aria-valuemin", String(bounds.min));
   els.detailResizer.setAttribute("aria-valuemax", String(bounds.max));
   els.detailResizer.setAttribute("aria-valuenow", String(nextWidth));
-  if (persist) localStorage.setItem(DETAIL_PANE_WIDTH_KEY, String(nextWidth));
+  if (persist) {
+    localStorage.setItem(DETAIL_PANE_WIDTH_KEY, String(nextWidth));
+    localStorage.setItem(DETAIL_PANE_WIDTH_VERSION_KEY, DETAIL_LAYOUT_CONFIG.version);
+  }
 }
 
 function restoreDetailPaneWidth() {
+  const storedVersion = localStorage.getItem(DETAIL_PANE_WIDTH_VERSION_KEY);
+  if (storedVersion !== DETAIL_LAYOUT_CONFIG.version) {
+    localStorage.removeItem(DETAIL_PANE_WIDTH_KEY);
+    localStorage.setItem(DETAIL_PANE_WIDTH_VERSION_KEY, DETAIL_LAYOUT_CONFIG.version);
+  }
   const stored = localStorage.getItem(DETAIL_PANE_WIDTH_KEY);
   setDetailPaneWidth(stored || getDetailPaneBounds(window.innerWidth).defaultWidth);
+}
+
+function resetDetailPaneWidth() {
+  localStorage.removeItem(DETAIL_PANE_WIDTH_KEY);
+  localStorage.setItem(DETAIL_PANE_WIDTH_VERSION_KEY, DETAIL_LAYOUT_CONFIG.version);
+  setDetailPaneWidth(getDetailPaneBounds(window.innerWidth).defaultWidth);
+}
+
+function adjustDetailPaneWidth(delta) {
+  const current = Number(els.detailResizer.getAttribute("aria-valuenow")) || getDetailPaneBounds(window.innerWidth).defaultWidth;
+  setDetailPaneWidth(current + delta, true);
 }
 
 function setupDetailResizer() {
@@ -346,6 +384,10 @@ function setupDetailResizer() {
     const current = localStorage.getItem(DETAIL_PANE_WIDTH_KEY) || getDetailPaneBounds(window.innerWidth).defaultWidth;
     setDetailPaneWidth(current);
   });
+
+  els.detailShrinkBtn.addEventListener("click", () => adjustDetailPaneWidth(-DETAIL_LAYOUT_CONFIG.step));
+  els.detailGrowBtn.addEventListener("click", () => adjustDetailPaneWidth(DETAIL_LAYOUT_CONFIG.step));
+  els.detailResetBtn.addEventListener("click", resetDetailPaneWidth);
 }
 
 async function selectArticle(articleId) {
@@ -469,6 +511,7 @@ els.rangeTabs.forEach((button) => {
   });
 });
 
+applyDetailLayoutConfig();
 restoreDetailPaneWidth();
 setupDetailResizer();
 

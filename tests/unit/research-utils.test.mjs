@@ -32,8 +32,8 @@ test("filterArticles supports today, yesterday, 7d, all, and author filters", ()
 });
 
 test("clampDetailPaneWidth keeps the detail pane within desktop layout bounds", () => {
-    assert.equal(clampDetailPaneWidth(100, 1440), 340);
-    assert.equal(clampDetailPaneWidth(2000, 1440), 672);
-    assert.equal(clampDetailPaneWidth("bad", 1440), 460);
+    assert.equal(clampDetailPaneWidth(100, 1440), 420);
+    assert.equal(clampDetailPaneWidth(2000, 1440), 828);
+    assert.equal(clampDetailPaneWidth("bad", 1440), 680);
     assert.equal(getDetailPaneBounds(900).enabled, false);
 });

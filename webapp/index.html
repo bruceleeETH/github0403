@@ -78,13 +78,18 @@
         </main>
 
         <button id="detail-resizer" class="detail-resizer" type="button" aria-label="调整文章详情宽度"
-            aria-orientation="vertical" aria-valuemin="340" aria-valuemax="760" aria-valuenow="460"></button>
+            aria-orientation="vertical" aria-valuemin="420" aria-valuemax="1040" aria-valuenow="680"></button>
 
         <aside class="detail-pane" aria-label="文章详情">
             <div class="pane-title-row detail-heading">
                 <div>
                     <h2>文章详情</h2>
                     <p class="section-note">摘要、观点和本地文件入口</p>
+                </div>
+                <div class="detail-actions" aria-label="详情栏宽度控制">
+                    <button id="detail-shrink-btn" class="icon-text-btn" type="button">收窄</button>
+                    <button id="detail-grow-btn" class="icon-text-btn" type="button">加宽</button>
+                    <button id="detail-reset-btn" class="icon-text-btn" type="button">重置</button>
                 </div>
             </div>
             <div id="article-detail" class="detail-empty">粘贴链接开始抓取，或从每日文章中选择一篇查看。</div>
