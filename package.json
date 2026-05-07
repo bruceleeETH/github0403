@@ -7,6 +7,7 @@
         "wechat:puppeteer": "node save_wechat_article_puppeteer.mjs",
         "app": "node server.mjs",
         "start": "node server.mjs",
+        "test": "node --test",
         "tauri:dev": "tauri dev",
         "tauri:build": "tauri build"
     },
