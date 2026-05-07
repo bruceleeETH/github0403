@@ -18,6 +18,9 @@ const state = {
   queueOverLimit: false,
   selectedAuthor: "",
   selectedArticleId: "",
+  workspaceMode: "list",
+  readerDetail: null,
+  articleListScrollTop: 0,
   dateRange: "today",
   isFetching: false,
 };
@@ -36,7 +39,10 @@ const els = {
   queueList: document.querySelector("#queue-list"),
   activeFilter: document.querySelector("#active-filter"),
   articleCount: document.querySelector("#article-count"),
+  workspacePane: document.querySelector(".workspace-pane"),
   articles: document.querySelector("#articles"),
+  articlePanel: document.querySelector(".article-panel"),
+  readerPanel: document.querySelector("#reader-panel"),
   detail: document.querySelector("#article-detail"),
   detailResizer: document.querySelector("#detail-resizer"),
   detailShrinkBtn: document.querySelector("#detail-shrink-btn"),
@@ -117,6 +123,8 @@ function renderAuthors() {
     button.addEventListener("click", () => {
       state.selectedAuthor = button.dataset.author || "";
       state.selectedArticleId = "";
+      state.workspaceMode = "list";
+      state.readerDetail = null;
       renderAll();
       const first = getFilteredArticles()[0];
       if (first) selectArticle(first.article_id);
@@ -155,8 +163,52 @@ function renderArticles() {
   }).join("");
 
   els.articles.querySelectorAll(".article-row").forEach((button) => {
-    button.addEventListener("click", () => selectArticle(button.dataset.articleId));
+    button.addEventListener("click", () => openArticleReader(button.dataset.articleId));
   });
+}
+
+function renderWorkspace() {
+  if (state.workspaceMode === "reader" && state.readerDetail) {
+    renderArticleReader(state.readerDetail);
+    return;
+  }
+
+  state.workspaceMode = "list";
+  state.readerDetail = null;
+  els.articlePanel.hidden = false;
+  els.readerPanel.hidden = true;
+  els.readerPanel.innerHTML = "";
+  renderArticles();
+}
+
+function renderArticleReader(detail) {
+  const meta = detail.meta || {};
+  const analysis = detail.analysis || {};
+  const title = meta.title || detail.title || "未命名文章";
+  const author = meta.author || meta.account || detail.author || "未知作者";
+  const publishTime = meta.publishTime || detail.publish_time || "";
+  const source = meta.source || detail.source_url || "";
+
+  els.articlePanel.hidden = true;
+  els.readerPanel.hidden = false;
+  els.readerPanel.innerHTML = `
+    <div class="reader-toolbar">
+      <button id="reader-back-btn" class="reader-back-btn" type="button">返回每日文章</button>
+      <div class="reader-meta">
+        <span>${escapeHtml(author)}</span>
+        <span>${escapeHtml(publishTime)}</span>
+        <span>${escapeHtml(analysis.sentiment || "neutral")}</span>
+      </div>
+    </div>
+    <header class="reader-header">
+      <h2>${escapeHtml(title)}</h2>
+      ${source ? `<a href="${escapeHtml(source)}" target="_blank" rel="noreferrer">原文链接</a>` : ""}
+    </header>
+    <iframe class="reader-frame" src="${escapeHtml(detail.offline_html_url || "")}" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>
+  `;
+
+  els.readerPanel.querySelector("#reader-back-btn")?.addEventListener("click", closeArticleReader);
+  els.readerPanel.scrollTo({ top: 0 });
 }
 
 function renderQueue() {
@@ -276,7 +328,7 @@ function renderDetail(detail) {
 
 function renderAll() {
   renderAuthors();
-  renderArticles();
+  renderWorkspace();
   renderQueue();
 }
 
@@ -403,6 +455,36 @@ async function selectArticle(articleId) {
   }
 }
 
+async function openArticleReader(articleId) {
+  if (!articleId) return;
+  state.articleListScrollTop = els.workspacePane?.scrollTop || 0;
+  state.selectedArticleId = articleId;
+  renderArticles();
+  els.readerPanel.hidden = false;
+  els.readerPanel.innerHTML = `<div class="empty-state">正在打开文章原文...</div>`;
+  try {
+    const detail = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}`);
+    state.workspaceMode = "reader";
+    state.readerDetail = detail;
+    renderArticleReader(detail);
+    renderDetail(detail);
+  } catch (error) {
+    state.workspaceMode = "list";
+    state.readerDetail = null;
+    renderWorkspace();
+    renderEmptyDetail(`加载失败：${error.message}`);
+  }
+}
+
+function closeArticleReader() {
+  state.workspaceMode = "list";
+  state.readerDetail = null;
+  renderWorkspace();
+  requestAnimationFrame(() => {
+    els.workspacePane.scrollTop = state.articleListScrollTop || 0;
+  });
+}
+
 async function refreshAll() {
   const [{ articles }, { authors }] = await Promise.all([
     fetchJson("/api/articles"),
@@ -484,6 +566,8 @@ els.authorSearch.addEventListener("input", renderAuthors);
 els.allAuthorsBtn.addEventListener("click", () => {
   state.selectedAuthor = "";
   state.selectedArticleId = "";
+  state.workspaceMode = "list";
+  state.readerDetail = null;
   renderAll();
   const first = getFilteredArticles()[0];
   if (first) selectArticle(first.article_id);
@@ -504,11 +588,19 @@ els.rangeTabs.forEach((button) => {
     state.dateRange = button.dataset.range || "all";
     els.rangeTabs.forEach((tab) => tab.classList.toggle("active", tab === button));
     state.selectedArticleId = "";
+    state.workspaceMode = "list";
+    state.readerDetail = null;
     renderAll();
     const first = getFilteredArticles()[0];
     if (first) selectArticle(first.article_id);
     else renderEmptyDetail("当前日期范围内没有文章。");
   });
+});
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && state.workspaceMode === "reader") {
+    closeArticleReader();
+  }
 });
 
 applyDetailLayoutConfig();
