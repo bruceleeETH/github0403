@@ -508,8 +508,33 @@ h4 {
 
 .article-row {
     display: grid;
-    gap: 5px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
     padding: 12px;
+}
+
+.article-select-btn {
+    display: grid;
+    gap: 5px;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+    text-align: left;
+}
+
+.article-read-btn {
+    min-height: 30px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--accent-dark);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 800;
+    white-space: nowrap;
 }
 
 .article-row-title {
@@ -531,6 +556,17 @@ h4 {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.article-select-btn:focus-visible,
+.article-read-btn:hover,
+.article-read-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.article-select-btn:focus-visible .article-row-title {
+    color: var(--accent-dark);
 }
 
 .reader-panel {
@@ -678,6 +714,69 @@ h4 {
     line-height: 1.7;
 }
 
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.analysis-empty-panel {
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 14px;
+}
+
+.analysis-action-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.inline-status[data-tone="danger"] {
+    color: var(--danger);
+}
+
+.inline-status[data-tone="success"] {
+    color: var(--success);
+}
+
+.inline-status[data-tone="warning"] {
+    color: var(--warning);
+}
+
+.metric-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 10px;
+    min-width: 0;
+}
+
+.metric-item span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 6px;
+}
+
+.metric-item strong {
+    display: block;
+    color: var(--ink);
+    font-size: 17px;
+    line-height: 1.25;
+}
+
+.metric-item p,
+.analysis-source {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
 .detail-disclosure {
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -757,6 +856,103 @@ h4 {
 
 .viewpoint-item p {
     margin-bottom: 0;
+}
+
+.viewpoint-item span {
+    display: block;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+    margin-top: 6px;
+}
+
+.personal-note-section {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 12px;
+}
+
+.personal-note-head,
+.personal-note-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.personal-note-head h4 {
+    margin-bottom: 0;
+}
+
+.personal-note-input {
+    display: block;
+    width: 100%;
+    min-height: 300px;
+    max-height: 58vh;
+    margin-top: 10px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: #fbfdfc;
+    color: var(--ink);
+    padding: 12px;
+    outline: none;
+    resize: vertical;
+    font-family: "SFMono-Regular", Consolas, "Microsoft YaHei", monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+}
+
+.personal-note-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.personal-note-input:disabled {
+    color: var(--muted);
+    background: var(--panel-soft);
+}
+
+.personal-note-actions {
+    margin-top: 10px;
+}
+
+.indicator-list {
+    display: grid;
+    gap: 8px;
+}
+
+.indicator-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 10px 12px;
+}
+
+.indicator-item-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.indicator-item-head strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.indicator-item p {
+    margin: 8px 0 0;
+}
+
+.indicator-mentions {
+    display: block;
+    margin-top: 6px;
+    color: var(--accent-dark);
+    font-size: 12px;
+    line-height: 1.5;
 }
 
 .offline-frame-wrap {
@@ -854,5 +1050,9 @@ h4 {
     .offline-frame {
         height: 78vh;
         min-height: 520px;
+    }
+
+    .metric-grid {
+        grid-template-columns: 1fr;
     }
 }

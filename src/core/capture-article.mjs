@@ -5,7 +5,7 @@ import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME, MOBILE_WECHAT_UA } from "../config
 import { normalizeAuthorName, upsertIndexRecord } from "../storage/article-index.mjs";
 import { buildArticleId, buildIndexRecord, resolveArticleDir } from "../storage/file-layout.mjs";
 import { ensureDir } from "../storage/paths.mjs";
-import { buildAnalysis } from "./analyze-article.mjs";
+import { analyzeArticle } from "./analyze-article.mjs";
 import { launchArticleBrowser, prepareArticlePage } from "./browser-session.mjs";
 import { writeArticleFiles } from "./export-article.mjs";
 import {
@@ -58,7 +58,7 @@ export async function saveFromPage(page, url, baseOutputDir, imageCache) {
 
     const urlToLocal = await saveImagesFromCapture(data.images, articleDir, imageCache, requestHeaders);
     const localContentHtml = replaceImageUrlsInHtml(data.contentHtml, urlToLocal);
-    const analysis = buildAnalysis(meta, localContentHtml);
+    const analysis = await analyzeArticle(meta, localContentHtml);
     const files = writeArticleFiles({
         articleDir,
         meta,
@@ -143,4 +143,3 @@ export async function captureArticleToLocal(url, options = {}) {
         await browser.close();
     }
 }
-

@@ -64,9 +64,84 @@ const statusLabels = {
 
 async function fetchJson(url, options) {
   const resp = await fetch(url, options);
-  const data = await resp.json();
+  const text = await resp.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
+    throw new Error(`服务返回了非 JSON 响应：${text.slice(0, 120)}`);
+  }
   if (!resp.ok) throw new Error(data.error || "请求失败");
   return data;
+}
+
+function sentimentLabel(value) {
+  const labels = {
+    positive: "积极",
+    neutral: "中性",
+    negative: "消极",
+    bullish: "偏多",
+    bearish: "偏空",
+    mixed: "分歧",
+    low: "低",
+    medium: "中",
+    high: "高",
+    unknown: "未知",
+    intraday: "日内",
+    short_term: "短期",
+    mid_term: "中期",
+    long_term: "长期",
+  };
+  return labels[value] || value || "未知";
+}
+
+function analysisSourceLabel(analysis) {
+  return [analysis?.analysis_provider, analysis?.analysis_model].filter(Boolean).join(" / ");
+}
+
+function hasModelAnalysis(analysis) {
+  return Boolean(analysis?.analysis_provider && analysis?.analysis_model && analysis.analysis_provider !== "rule" && analysis.analysis_status !== "failed");
+}
+
+function indicatorLabels(items, limit = 6) {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      if (typeof item === "string") return item.trim();
+      const name = String(item?.name || "").trim();
+      const code = String(item?.code || "").trim();
+      if (name && code) return `${name}(${code})`;
+      return name || code;
+    })
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function renderIndicatorItems(items, emptyText, type) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return `<p class="muted-text">${escapeHtml(emptyText)}</p>`;
+  }
+  return `
+    <div class="indicator-list">
+      ${items.map((item) => {
+        const label = typeof item === "string" ? item : [item.name, item.code ? `(${item.code})` : ""].filter(Boolean).join("");
+        const reason = typeof item === "string" ? "" : item.reason || "";
+        const mentions = typeof item === "string" ? [] : item.mentions || [];
+        const tone = typeof item === "string" ? "neutral" : item.sentiment || "neutral";
+        return `
+          <div class="indicator-item" data-type="${escapeHtml(type)}">
+            <div class="indicator-item-head">
+              <strong>${escapeHtml(label || "未命名")}</strong>
+              <span class="sentiment-tag" data-sentiment="${escapeHtml(tone)}">${escapeHtml(sentimentLabel(tone))}</span>
+            </div>
+            ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
+            ${mentions.length ? `<span class="indicator-mentions">${escapeHtml(mentions.slice(0, 4).join("、"))}</span>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
 }
 
 function setBatchStatus(message, tone = "") {
@@ -104,6 +179,9 @@ function renderAuthors() {
   els.authors.innerHTML = authors.map((author) => {
     const active = state.selectedAuthor === author.author;
     const sentiments = author.sentiments || { positive: 0, neutral: 0, negative: 0 };
+    const topicStrip = (author.top_sectors || []).length
+      ? `板块 ${author.top_sectors.slice(0, 3).join("、")}`
+      : ((author.top_keywords || []).slice(0, 4).join("、") || "暂无关键词");
     return `
       <button class="author-row${active ? " active" : ""}" type="button" data-author="${escapeHtml(author.author)}">
         <span class="author-row-main">
@@ -114,7 +192,7 @@ function renderAuthors() {
           <span>${author.article_count || 0} 篇</span>
           <span>正 ${sentiments.positive || 0} / 中 ${sentiments.neutral || 0} / 负 ${sentiments.negative || 0}</span>
         </span>
-        <span class="keyword-strip">${escapeHtml((author.top_keywords || []).slice(0, 4).join("、") || "暂无关键词")}</span>
+        <span class="keyword-strip">${escapeHtml(topicStrip)}</span>
       </button>
     `;
   }).join("");
@@ -149,21 +227,37 @@ function renderArticles() {
     const dateHeader = dateKey !== lastDate ? `<div class="date-divider">${escapeHtml(dateKey)}</div>` : "";
     lastDate = dateKey;
     const active = state.selectedArticleId === article.article_id;
+    const sectors = indicatorLabels(article.sectors, 3);
+    const stocks = indicatorLabels(article.stocks, 3);
+    const indicatorText = [
+      sectors.length ? `板块 ${sectors.join("、")}` : "",
+      stocks.length ? `个股 ${stocks.join("、")}` : "",
+    ].filter(Boolean).join(" / ");
     return `
       ${dateHeader}
-      <button class="article-row${active ? " active" : ""}" type="button" data-article-id="${escapeHtml(article.article_id)}">
-        <span class="article-row-title">${escapeHtml(article.title || "未命名文章")}</span>
-        <span class="article-row-meta">
-          <span>${escapeHtml(article.author || article.account || "未知作者")}</span>
-          <span>${escapeHtml(article.publish_time || "")}</span>
-        </span>
-        <span class="article-row-keywords">${escapeHtml((article.keywords || []).slice(0, 5).join("、") || "暂无关键词")}</span>
-      </button>
+      <div class="article-row${active ? " active" : ""}" data-article-id="${escapeHtml(article.article_id)}">
+        <button class="article-select-btn" type="button" data-article-id="${escapeHtml(article.article_id)}">
+          <span class="article-row-title">${escapeHtml(article.title || "未命名文章")}</span>
+          <span class="article-row-meta">
+            <span>${escapeHtml(article.author || article.account || "未知作者")}</span>
+            <span>${escapeHtml(article.publish_time || "")}</span>
+          </span>
+          <span class="article-row-keywords">${escapeHtml(indicatorText || (article.keywords || []).slice(0, 5).join("、") || "暂无关键词")}</span>
+        </button>
+        <button class="article-read-btn" type="button" data-article-id="${escapeHtml(article.article_id)}">阅读</button>
+      </div>
     `;
   }).join("");
 
-  els.articles.querySelectorAll(".article-row").forEach((button) => {
-    button.addEventListener("click", () => openArticleReader(button.dataset.articleId));
+  els.articles.querySelectorAll(".article-row").forEach((row) => {
+    row.addEventListener("click", () => selectArticle(row.dataset.articleId));
+  });
+
+  els.articles.querySelectorAll(".article-read-btn").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      openArticleReader(button.dataset.articleId);
+    });
   });
 }
 
@@ -197,7 +291,7 @@ function renderArticleReader(detail) {
       <div class="reader-meta">
         <span>${escapeHtml(author)}</span>
         <span>${escapeHtml(publishTime)}</span>
-        <span>${escapeHtml(analysis.sentiment || "neutral")}</span>
+        <span>${escapeHtml(sentimentLabel(analysis.sentiment || "neutral"))}</span>
       </div>
     </div>
     <header class="reader-header">
@@ -239,19 +333,130 @@ function renderEmptyDetail(message) {
   els.detail.innerHTML = `<div class="detail-empty">${escapeHtml(message)}</div>`;
 }
 
+function renderDetailFiles(detail, meta, includeMarkdown = true) {
+  return `
+    <section class="detail-section">
+      <h4>文件入口</h4>
+      <div class="link-row">
+        <button type="button" class="secondary-btn" data-offline-url="${escapeHtml(detail.offline_html_url || "")}">离线 HTML</button>
+        <button type="button" class="secondary-btn" id="share-article-btn" data-article-id="${escapeHtml(meta.articleId || detail.article_id || "")}">分享页面</button>
+      </div>
+      <div id="offline-frame-wrap" class="offline-frame-wrap" hidden>
+        <div class="offline-frame-toolbar">
+          <span>离线页面</span>
+          <button type="button" id="close-offline-frame">关闭</button>
+        </div>
+        <iframe id="offline-frame" class="offline-frame" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>
+      </div>
+    </section>
+
+    ${detail.image_urls?.length ? `
+      <details class="detail-disclosure">
+        <summary>图片 ${detail.image_urls.length} 张</summary>
+        <div class="image-gallery">
+          ${detail.image_urls.map((url, index) => `<img src="${escapeHtml(url)}" alt="文章图片 ${index + 1}" loading="lazy" />`).join("")}
+        </div>
+      </details>
+    ` : ""}
+
+    ${includeMarkdown ? `
+      <details class="detail-disclosure">
+        <summary>Markdown</summary>
+        <pre class="markdown-box">${escapeHtml(detail.markdown || "")}</pre>
+      </details>
+    ` : ""}
+  `;
+}
+
+function renderPersonalNoteSection(detail, meta) {
+  const articleId = meta.articleId || detail.article_id || "";
+  return `
+    <section class="detail-section personal-note-section" data-article-id="${escapeHtml(articleId)}">
+      <div class="personal-note-head">
+        <h4>我的笔记</h4>
+        <span class="inline-status" id="personal-note-status">加载中...</span>
+      </div>
+      <textarea id="personal-note-input" class="personal-note-input" spellcheck="false" disabled></textarea>
+      <div class="personal-note-actions">
+        <button type="button" class="primary-btn" id="save-personal-note-btn" disabled>保存笔记</button>
+        <span class="inline-status" id="personal-note-save-status"></span>
+      </div>
+    </section>
+  `;
+}
+
 function renderDetail(detail) {
   const meta = detail.meta || {};
   const analysis = detail.analysis || {};
+  const analyzed = hasModelAnalysis(analysis);
   const viewpoints = analysis.viewpoints || [];
   const keywords = analysis.keywords || [];
+  const sectors = analysis.sectors || [];
+  const stocks = analysis.stocks || [];
+  const emotion = analysis.market_emotion || {};
+  const metrics = analysis.key_metrics || {};
+  const modelLabel = analysisSourceLabel(analysis);
+
+  if (!analyzed) {
+    els.detail.innerHTML = `
+      <article class="detail-content">
+        <header class="detail-title-block">
+          <h3>${escapeHtml(meta.title || detail.title || "未命名文章")}</h3>
+          <p>${escapeHtml(meta.author || meta.account || detail.author || "未知作者")} · ${escapeHtml(meta.publishTime || detail.publish_time || "")}</p>
+        </header>
+
+        <section class="detail-section analysis-empty-panel">
+          <h4>模型分析</h4>
+          <p>${escapeHtml(analysis.analysis_note || "旧版规则分析已清除，可点击立刻分析使用模型重新提炼。")}</p>
+          <div class="analysis-action-row">
+            <button type="button" class="primary-btn" id="analyze-now-btn" data-article-id="${escapeHtml(meta.articleId || detail.article_id || "")}">立刻分析</button>
+            <span class="inline-status" id="analysis-action-status">将使用当前配置的模型分析这篇文章。</span>
+          </div>
+        </section>
+
+        ${renderPersonalNoteSection(detail, meta)}
+
+        ${renderDetailFiles(detail, meta, false)}
+      </article>
+    `;
+    bindDetailFileActions();
+    return;
+  }
 
   els.detail.innerHTML = `
     <article class="detail-content">
       <header class="detail-title-block">
-        <span class="sentiment-tag" data-sentiment="${escapeHtml(analysis.sentiment || "neutral")}">${escapeHtml(analysis.sentiment || "neutral")}</span>
+        <span class="sentiment-tag" data-sentiment="${escapeHtml(analysis.sentiment || "neutral")}">${escapeHtml(sentimentLabel(analysis.sentiment || "neutral"))}</span>
         <h3>${escapeHtml(meta.title || detail.title || "未命名文章")}</h3>
         <p>${escapeHtml(meta.author || meta.account || detail.author || "未知作者")} · ${escapeHtml(meta.publishTime || detail.publish_time || "")}</p>
       </header>
+
+      <section class="detail-section">
+        <h4>关键指标</h4>
+        <p class="analysis-source">以下内容经过 ${escapeHtml(modelLabel)} 模型分析。</p>
+        <div class="metric-grid">
+          <div class="metric-item">
+            <span>市场情绪</span>
+            <strong>${escapeHtml(sentimentLabel(emotion.label || "neutral"))}</strong>
+            <p>${escapeHtml(emotion.description || "暂无情绪说明")}</p>
+          </div>
+          <div class="metric-item">
+            <span>情绪强度</span>
+            <strong>${escapeHtml(String(emotion.intensity || 0))}</strong>
+            <p>1-5</p>
+          </div>
+          <div class="metric-item">
+            <span>重要度</span>
+            <strong>${escapeHtml(String(metrics.importance_score || 0))}</strong>
+            <p>1-10</p>
+          </div>
+          <div class="metric-item">
+            <span>风险</span>
+            <strong>${escapeHtml(sentimentLabel(metrics.risk_level || "unknown"))}</strong>
+            <p>${escapeHtml(sentimentLabel(metrics.time_horizon || "unknown"))}</p>
+          </div>
+        </div>
+      </section>
 
       <section class="detail-section">
         <h4>关键词</h4>
@@ -266,50 +471,174 @@ function renderDetail(detail) {
       </section>
 
       <section class="detail-section">
+        <h4>板块</h4>
+        ${renderIndicatorItems(sectors, "暂无板块提及", "sector")}
+      </section>
+
+      <section class="detail-section">
+        <h4>个股</h4>
+        ${renderIndicatorItems(stocks, "暂无个股提及", "stock")}
+      </section>
+
+      <section class="detail-section">
         <h4>核心观点</h4>
         <div class="viewpoint-list">
           ${viewpoints.length ? viewpoints.map((item) => `
             <div class="viewpoint-item">
               <strong>${escapeHtml(item.id)}</strong>
               <p>${escapeHtml(item.text)}</p>
+              ${item.evidence ? `<span>${escapeHtml(item.evidence)}</span>` : ""}
             </div>
           `).join("") : "<p class=\"muted-text\">暂无观点片段</p>"}
         </div>
       </section>
 
-      <section class="detail-section">
-        <h4>文件入口</h4>
-        <div class="link-row">
-          <button type="button" class="secondary-btn" data-offline-url="${escapeHtml(detail.offline_html_url || "")}">离线 HTML</button>
-          <button type="button" class="secondary-btn" id="share-article-btn" data-article-id="${escapeHtml(meta.articleId || detail.article_id || "")}">分享页面</button>
-        </div>
-        <div id="offline-frame-wrap" class="offline-frame-wrap" hidden>
-          <div class="offline-frame-toolbar">
-            <span>离线页面</span>
-            <button type="button" id="close-offline-frame">关闭</button>
-          </div>
-          <iframe id="offline-frame" class="offline-frame" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>
-        </div>
-      </section>
+      ${renderPersonalNoteSection(detail, meta)}
 
-      ${detail.image_urls?.length ? `
-        <details class="detail-disclosure">
-          <summary>图片 ${detail.image_urls.length} 张</summary>
-          <div class="image-gallery">
-            ${detail.image_urls.map((url, index) => `<img src="${escapeHtml(url)}" alt="文章图片 ${index + 1}" loading="lazy" />`).join("")}
-          </div>
-        </details>
-      ` : ""}
-
-      <details class="detail-disclosure">
-        <summary>Markdown</summary>
-        <pre class="markdown-box">${escapeHtml(detail.markdown || "")}</pre>
-      </details>
+      ${renderDetailFiles(detail, meta, true)}
     </article>
   `;
 
+  bindDetailFileActions();
+}
+
+function formatNoteTimestamp(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getPersonalNoteControls(articleId) {
+  const sections = [...els.detail.querySelectorAll(".personal-note-section")];
+  const section = articleId
+    ? sections.find((item) => item.dataset.articleId === articleId)
+    : sections[0];
+  if (!section) return null;
+  return {
+    section,
+    textarea: section.querySelector("#personal-note-input"),
+    saveButton: section.querySelector("#save-personal-note-btn"),
+    status: section.querySelector("#personal-note-status"),
+    saveStatus: section.querySelector("#personal-note-save-status"),
+  };
+}
+
+function setPersonalNoteStatus(controls, text, tone = "") {
+  if (!controls?.status) return;
+  controls.status.textContent = text;
+  controls.status.dataset.tone = tone;
+}
+
+function setPersonalNoteSaveStatus(controls, text, tone = "") {
+  if (!controls?.saveStatus) return;
+  controls.saveStatus.textContent = text;
+  controls.saveStatus.dataset.tone = tone;
+}
+
+function rememberPersonalNoteCleanStatus(controls, text, tone = "") {
+  if (!controls?.section) return;
+  controls.section.dataset.cleanStatus = text;
+  controls.section.dataset.cleanTone = tone;
+  setPersonalNoteStatus(controls, text, tone);
+}
+
+async function loadPersonalNote(articleId) {
+  const controls = getPersonalNoteControls(articleId);
+  if (!articleId || !controls) return;
+
+  setPersonalNoteStatus(controls, "加载中...");
+  setPersonalNoteSaveStatus(controls, "");
+
+  try {
+    const note = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}/note`);
+    const current = getPersonalNoteControls(articleId);
+    if (!current) return;
+
+    current.textarea.value = note.content || "";
+    current.textarea.dataset.savedValue = current.textarea.value;
+    current.textarea.disabled = false;
+    current.saveButton.disabled = false;
+    rememberPersonalNoteCleanStatus(
+      current,
+      note.exists ? `已保存 ${formatNoteTimestamp(note.updated_at)}` : "新笔记",
+      note.exists ? "success" : ""
+    );
+  } catch (error) {
+    const current = getPersonalNoteControls(articleId);
+    if (!current) return;
+    current.textarea.disabled = true;
+    current.saveButton.disabled = true;
+    setPersonalNoteStatus(current, `加载失败：${error.message}`, "danger");
+  }
+}
+
+async function savePersonalNote(articleId) {
+  const controls = getPersonalNoteControls(articleId);
+  if (!articleId || !controls) return;
+
+  controls.saveButton.disabled = true;
+  controls.saveButton.textContent = "保存中...";
+  setPersonalNoteSaveStatus(controls, "正在写入 personal_note.md");
+
+  try {
+    const note = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}/note`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: controls.textarea.value }),
+    });
+    const current = getPersonalNoteControls(articleId);
+    if (!current) return;
+
+    current.textarea.value = note.content || "";
+    current.textarea.dataset.savedValue = current.textarea.value;
+    current.saveButton.disabled = false;
+    current.saveButton.textContent = "保存笔记";
+    rememberPersonalNoteCleanStatus(current, `已保存 ${formatNoteTimestamp(note.updated_at)}`, "success");
+    setPersonalNoteSaveStatus(current, "保存完成", "success");
+  } catch (error) {
+    const current = getPersonalNoteControls(articleId);
+    if (!current) return;
+    current.saveButton.disabled = false;
+    current.saveButton.textContent = "重试保存";
+    setPersonalNoteSaveStatus(current, `保存失败：${error.message}`, "danger");
+  }
+}
+
+function bindPersonalNoteActions() {
+  const section = els.detail.querySelector(".personal-note-section");
+  const articleId = section?.dataset.articleId || "";
+  if (!section || !articleId) return;
+
+  const controls = getPersonalNoteControls(articleId);
+  controls?.textarea?.addEventListener("input", () => {
+    const changed = controls.textarea.value !== (controls.textarea.dataset.savedValue || "");
+    if (changed) {
+      setPersonalNoteStatus(controls, "未保存", "warning");
+      setPersonalNoteSaveStatus(controls, "");
+    } else {
+      setPersonalNoteStatus(
+        controls,
+        controls.section.dataset.cleanStatus || "已保存",
+        controls.section.dataset.cleanTone || "success"
+      );
+      setPersonalNoteSaveStatus(controls, "");
+    }
+  });
+  controls?.saveButton?.addEventListener("click", () => savePersonalNote(articleId));
+  loadPersonalNote(articleId);
+}
+
+function bindDetailFileActions() {
   const frameWrap = els.detail.querySelector("#offline-frame-wrap");
   const frame = els.detail.querySelector("#offline-frame");
+  bindPersonalNoteActions();
+
   els.detail.querySelector("[data-offline-url]")?.addEventListener("click", (event) => {
     const url = event.currentTarget.dataset.offlineUrl;
     if (!url) return;
@@ -324,6 +653,48 @@ function renderDetail(detail) {
     const articleId = event.currentTarget.dataset.articleId;
     if (articleId) window.open(`/api/articles/${encodeURIComponent(articleId)}/share`, "_blank");
   });
+  els.detail.querySelector("#analyze-now-btn")?.addEventListener("click", (event) => {
+    analyzeArticleNow(event.currentTarget.dataset.articleId);
+  });
+}
+
+async function analyzeArticleNow(articleId) {
+  if (!articleId) return;
+  const button = els.detail.querySelector("#analyze-now-btn");
+  const status = els.detail.querySelector("#analysis-action-status");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "分析中...";
+  }
+  if (status) {
+    status.textContent = "正在提炼核心观点、板块、个股和情绪。";
+    status.dataset.tone = "";
+  }
+
+  try {
+    const detail = await fetchJson(`/api/articles/${encodeURIComponent(articleId)}/analyze`, {
+      method: "POST",
+    });
+    state.selectedArticleId = detail.article_id || articleId;
+    if (state.workspaceMode === "reader") {
+      state.readerDetail = detail;
+      renderArticleReader(detail);
+    }
+    await refreshAll();
+    renderDetail(detail);
+  } catch (error) {
+    const message = error.message === "Not Found"
+      ? "分析接口未加载，请重启 npm start 后重试。"
+      : error.message;
+    if (button) {
+      button.disabled = false;
+      button.textContent = "重试分析";
+    }
+    if (status) {
+      status.textContent = `模型分析失败：${message}`;
+      status.dataset.tone = "danger";
+    }
+  }
 }
 
 function renderAll() {

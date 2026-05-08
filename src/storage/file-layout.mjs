@@ -17,7 +17,31 @@ export function resolveArticleDir(baseOutputDir, meta) {
     return path.join(baseOutputDir, safeAccount, `${datePart}_${safeTitle || meta.articleId}`);
 }
 
+function buildIndexLabels(items, limit = 12) {
+    if (!Array.isArray(items)) return [];
+    return items
+        .map((item) => {
+            if (typeof item === "string") return item.trim();
+            const name = String(item?.name || "").trim();
+            const code = String(item?.code || "").trim();
+            if (name && code) return `${name}(${code})`;
+            return name || code;
+        })
+        .filter(Boolean)
+        .slice(0, limit);
+}
+
+function isModelAnalysisRecord(analysis) {
+    return Boolean(
+        analysis?.analysis_provider &&
+        analysis?.analysis_model &&
+        analysis.analysis_provider !== "rule" &&
+        analysis.analysis_status !== "failed"
+    );
+}
+
 export function buildIndexRecord(baseOutputDir, articleDir, meta, analysis) {
+    const hasModelAnalysis = isModelAnalysisRecord(analysis);
     return {
         article_id: meta.articleId,
         title: meta.title,
@@ -31,8 +55,12 @@ export function buildIndexRecord(baseOutputDir, articleDir, meta, analysis) {
         analysis_file: path.relative(baseOutputDir, path.join(articleDir, "analysis.json")),
         content_hash: meta.contentHash,
         captured_at: meta.savedAt,
-        keywords: analysis.keywords,
-        sentiment: analysis.sentiment,
+        keywords: hasModelAnalysis ? analysis.keywords : [],
+        sentiment: hasModelAnalysis ? analysis.sentiment : "",
+        sectors: hasModelAnalysis ? buildIndexLabels(analysis.sectors, 8) : [],
+        stocks: hasModelAnalysis ? buildIndexLabels(analysis.stocks, 12) : [],
+        analysis_provider: hasModelAnalysis ? analysis.analysis_provider : "",
+        analysis_model: hasModelAnalysis ? analysis.analysis_model : "",
+        analysis_schema_version: analysis.analysis_schema_version || 1,
     };
 }
-

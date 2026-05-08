@@ -22,6 +22,15 @@ npm install
 
 ## 本地网页应用
 
+如需启用 DeepSeek LLM 分析，复制 `.env.example` 为 `.env.local`，填入：
+
+```bash
+DEEPSEEK_API_KEY=sk-xxxxx
+```
+
+`.env.local` 已被 git 忽略。未配置 key 或 API 调用失败时，应用会标记为“未完成模型分析”，不再展示旧版规则分析。
+启用后，文章正文会发送到 DeepSeek API；当前 DeepSeek 分析模型为 `deepseek-v4-flash`。
+
 ```bash
 npm start
 ```
@@ -36,6 +45,9 @@ http://127.0.0.1:4318
 
 - 输入公众号文章 URL 并抓取到本地
 - 自动生成离线 HTML、Markdown、analysis.json
+- 在每篇文章下保存独立的 `personal_note.md`，用于记录自己的感悟和理解
+- 配置 DeepSeek API key 后，用 `deepseek-v4-flash` 提炼核心观点、板块、个股和市场情绪
+- 旧文章未完成模型分析时，可在详情页点击“立刻分析”，直接用本地正文补生成模型分析
 - 展示文章列表和作者列表
 - 按作者汇总文章数量、关键词和情绪分布
 
@@ -58,7 +70,8 @@ Puppeteer 方案输出内容包括：
 
 - `meta.json`：标题、公众号、发布时间、来源链接等元数据
 - `article.md`：适合 agent 分析的 Markdown，包含 YAML frontmatter
-- `analysis.json`：基础分析结果，包含摘要、关键词、情绪、核心观点
+- `personal_note.md`：手写个人感悟、理解、可验证假设和复盘记录
+- `analysis.json`：分析结果，包含摘要、关键词、情绪、核心观点；启用 DeepSeek 后会额外包含板块、个股、市场情绪、风险和重要度
 - `article_content.html`：正文 HTML
 - `offline_article.html`：本地可直接打开的离线页面
 - `raw_page.html`：完整页面 HTML
@@ -113,6 +126,7 @@ wechat_articles_puppeteer/
     └── YYYY-MM-DD_文章标题/
         ├── meta.json
         ├── article.md
+        ├── personal_note.md
         ├── analysis.json
         ├── article_content.html
         ├── offline_article.html

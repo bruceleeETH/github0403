@@ -2,7 +2,8 @@
 import { fileURLToPath } from "node:url";
 import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME } from "./src/config/constants.mjs";
 import { runFetchArticleCli } from "./src/cli/fetch-article.mjs";
-import { buildAnalysis } from "./src/core/analyze-article.mjs";
+import { analyzeArticle, buildAnalysis, buildRuleBasedAnalysis } from "./src/core/analyze-article.mjs";
+import { analyzeWithDeepSeek } from "./src/core/deepseek-analyzer.mjs";
 import { captureArticleToLocal } from "./src/core/capture-article.mjs";
 import { buildMarkdown } from "./src/core/export-article.mjs";
 import { listAccountArticles } from "./src/core/list-account-articles.mjs";
@@ -13,7 +14,10 @@ const __filename = fileURLToPath(import.meta.url);
 export {
     captureArticleToLocal,
     listAccountArticles,
+    analyzeArticle,
+    analyzeWithDeepSeek,
     buildAnalysis,
+    buildRuleBasedAnalysis,
     buildMarkdown,
     DEFAULT_OUTPUT_DIR,
     INDEX_FILE_NAME,

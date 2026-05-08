@@ -24,6 +24,8 @@ test("writeArticleFiles exports the expected article artifact structure", (t) =>
         summary: "市场机会与风险并存。",
         sentiment: "neutral",
         keywords: ["机会", "风险"],
+        analysis_provider: "deepseek",
+        analysis_model: "deepseek-v4-flash",
     };
     const files = writeArticleFiles({
         articleDir,
@@ -44,7 +46,8 @@ test("writeArticleFiles exports the expected article artifact structure", (t) =>
     assert.equal(JSON.parse(fs.readFileSync(files.meta, "utf-8")).articleId, meta.articleId);
     assert.equal(JSON.parse(fs.readFileSync(files.analysis, "utf-8")).sentiment, "neutral");
     assert.equal(fs.readFileSync(files.articleContent, "utf-8"), "<p>市场机会与风险并存。</p>");
-    assert.match(fs.readFileSync(files.markdown, "utf-8"), /## 自动分析/);
+    assert.match(fs.readFileSync(files.markdown, "utf-8"), /## 模型分析/);
+    assert.match(fs.readFileSync(files.markdown, "utf-8"), /以下内容经过 deepseek \/ deepseek-v4-flash 模型分析/);
     assert.match(fs.readFileSync(files.offlineHtml, "utf-8"), /<article><p>市场机会与风险并存。<\/p><\/article>/);
     assert.match(fs.readFileSync(files.rawPage, "utf-8"), /raw page/);
 });

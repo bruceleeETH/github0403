@@ -33,6 +33,8 @@ export function formatFrontmatter(meta) {
         ["source", meta.source],
         ["content_hash", meta.contentHash],
         ["keywords", meta.keywords || []],
+        ["sectors", meta.sectors || []],
+        ["stocks", meta.stocks || []],
         ["sentiment", meta.sentiment || "neutral"],
         ["summary", meta.summary || ""],
     ];
@@ -40,15 +42,47 @@ export function formatFrontmatter(meta) {
     return `---\n${entries.map(([key, value]) => `${key}: ${formatFrontmatterValue(value)}`).join("\n")}\n---\n\n`;
 }
 
+function formatIndicatorNames(items) {
+    if (!Array.isArray(items)) return "";
+    return items
+        .map((item) => {
+            if (typeof item === "string") return item.trim();
+            const name = String(item?.name || "").trim();
+            const code = String(item?.code || "").trim();
+            if (name && code) return `${name}(${code})`;
+            return name || code;
+        })
+        .filter(Boolean)
+        .join("、");
+}
+
+function formatMarketEmotion(analysis) {
+    const emotion = analysis.market_emotion || {};
+    const label = emotion.label || "";
+    const intensity = emotion.intensity ? ` / 强度 ${emotion.intensity}` : "";
+    const description = emotion.description ? ` / ${emotion.description}` : "";
+    return `${label}${intensity}${description}`;
+}
+
+function getAnalysisModelLabel(analysis) {
+    return [analysis.analysis_provider, analysis.analysis_model].filter(Boolean).join(" / ");
+}
+
 export function buildMarkdown(meta, contentHtml, analysis) {
     const frontmatter = formatFrontmatter({
         ...meta,
         keywords: analysis.keywords,
+        sectors: formatIndicatorNames(analysis.sectors).split("、").filter(Boolean),
+        stocks: formatIndicatorNames(analysis.stocks).split("、").filter(Boolean),
         sentiment: analysis.sentiment,
         summary: analysis.summary,
     });
 
     const markdownBody = turndown.turndown(contentHtml || "").trim();
+    const viewpoints = Array.isArray(analysis.viewpoints) ? analysis.viewpoints : [];
+    const viewpointLines = viewpoints.length
+        ? viewpoints.map((item) => `- ${item.text || ""}${item.evidence ? `（依据：${item.evidence}）` : ""}`)
+        : ["- 暂无观点片段"];
     const header = [
         `# ${meta.title || "微信公众号文章"}`,
         "",
@@ -57,11 +91,22 @@ export function buildMarkdown(meta, contentHtml, analysis) {
         `- 发布时间：${meta.publishTime || ""}`,
         `- 原文链接：${meta.source || ""}`,
         "",
-        "## 自动分析",
+        "## 模型分析",
+        "",
+        getAnalysisModelLabel(analysis)
+            ? `以下内容经过 ${getAnalysisModelLabel(analysis)} 模型分析。`
+            : "该文章尚未完成模型分析。",
         "",
         `- 摘要：${analysis.summary || ""}`,
         `- 情绪：${analysis.sentiment || "neutral"}`,
+        `- 市场情绪：${formatMarketEmotion(analysis) || "unknown"}`,
+        `- 板块：${formatIndicatorNames(analysis.sectors) || "无"}`,
+        `- 个股：${formatIndicatorNames(analysis.stocks) || "无"}`,
         `- 关键词：${(analysis.keywords || []).join("、")}`,
+        "",
+        "### 核心观点",
+        "",
+        ...viewpointLines,
         "",
         "## 正文",
         "",
@@ -124,4 +169,3 @@ export function writeArticleFiles({ articleDir, meta, analysis, localContentHtml
 
     return files;
 }
-
