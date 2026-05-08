@@ -1,5 +1,6 @@
 # 依赖
 node_modules/
+.venv/
 
 # Rust 构建产物
 src-tauri/target/

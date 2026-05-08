@@ -111,32 +111,21 @@
                     <div class="pane-title-row">
                         <div>
                             <h2 id="stock-form-title">添加股票</h2>
-                            <p class="section-note">先用测试收盘价跑通追踪，后续可替换为真实行情接口。</p>
+                            <p id="stock-catalog-status" class="section-note">股票目录未更新</p>
                         </div>
-                        <span id="stock-form-status" class="inline-status"></span>
+                        <div class="stock-form-head-actions">
+                            <button id="update-stock-catalog-btn" class="secondary-btn" type="button">更新股票目录</button>
+                            <span id="stock-form-status" class="inline-status"></span>
+                        </div>
                     </div>
 
                     <form id="stock-form" class="stock-form">
-                        <label>
-                            <span class="field-label">代码</span>
-                            <input id="stock-code" class="text-input" type="text" placeholder="688981 或 SH.688981"
+                        <label class="stock-query-field">
+                            <span class="field-label">股票</span>
+                            <input id="stock-query" class="text-input" type="search" placeholder="中芯国际 / 688981 / AAPL"
                                 autocomplete="off" required />
-                        </label>
-                        <label>
-                            <span class="field-label">名称</span>
-                            <input id="stock-name" class="text-input" type="text" placeholder="中芯国际" autocomplete="off"
-                                required />
-                        </label>
-                        <label>
-                            <span class="field-label">市场</span>
-                            <select id="stock-exchange" class="text-input">
-                                <option value="">自动识别</option>
-                                <option value="SH">沪市 SH</option>
-                                <option value="SZ">深市 SZ</option>
-                                <option value="BJ">北交所 BJ</option>
-                                <option value="HK">港股 HK</option>
-                                <option value="US">美股 US</option>
-                            </select>
+                            <input id="stock-selected-id" type="hidden" />
+                            <div id="stock-candidate-list" class="stock-candidate-list" aria-live="polite"></div>
                         </label>
                         <label>
                             <span class="field-label">标签</span>
@@ -153,6 +142,17 @@
                             <button id="cancel-stock-edit-btn" class="secondary-btn" type="button" hidden>取消编辑</button>
                         </div>
                     </form>
+                </section>
+
+                <section class="article-panel stock-review-panel" aria-labelledby="stock-review-title">
+                    <div class="pane-title-row article-toolbar">
+                        <div>
+                            <h2 id="stock-review-title">待复盘</h2>
+                            <p class="section-note">根据价格异动和文章提及自动生成。</p>
+                        </div>
+                        <span id="stock-review-count" class="count-label">0 条</span>
+                    </div>
+                    <div id="stock-review-list" class="stock-review-list" aria-live="polite"></div>
                 </section>
 
                 <section class="article-panel stock-rank-panel" aria-labelledby="stock-rank-title">

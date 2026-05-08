@@ -16,6 +16,10 @@ const state = {
   articles: [],
   authors: [],
   stockDashboard: { stocks: [], rankings: [], summary: {} },
+  stockReviewQueue: [],
+  stockCatalogStatus: { exists: false, count: 0, markets: {} },
+  stockCandidate: null,
+  stockCandidates: [],
   queue: [],
   queueOverLimit: false,
   selectedAuthor: "",
@@ -51,9 +55,11 @@ const els = {
   stockForm: document.querySelector("#stock-form"),
   stockFormTitle: document.querySelector("#stock-form-title"),
   stockFormStatus: document.querySelector("#stock-form-status"),
-  stockCode: document.querySelector("#stock-code"),
-  stockName: document.querySelector("#stock-name"),
-  stockExchange: document.querySelector("#stock-exchange"),
+  stockCatalogStatus: document.querySelector("#stock-catalog-status"),
+  updateStockCatalogBtn: document.querySelector("#update-stock-catalog-btn"),
+  stockQuery: document.querySelector("#stock-query"),
+  stockSelectedId: document.querySelector("#stock-selected-id"),
+  stockCandidateList: document.querySelector("#stock-candidate-list"),
   stockTags: document.querySelector("#stock-tags"),
   stockReason: document.querySelector("#stock-reason"),
   saveStockBtn: document.querySelector("#save-stock-btn"),
@@ -63,6 +69,8 @@ const els = {
   stockRangeTabs: document.querySelectorAll("[data-stock-range]"),
   stockSortToggle: document.querySelector("#stock-sort-toggle"),
   stockRankList: document.querySelector("#stock-rank-list"),
+  stockReviewCount: document.querySelector("#stock-review-count"),
+  stockReviewList: document.querySelector("#stock-review-list"),
   batchLinks: document.querySelector("#batch-links"),
   linkCounter: document.querySelector("#link-counter"),
   parseLinksBtn: document.querySelector("#parse-links-btn"),
@@ -85,6 +93,9 @@ const els = {
   shell: document.querySelector(".research-shell"),
   rangeTabs: document.querySelectorAll("[data-range]"),
 };
+
+let stockSearchTimer = 0;
+let stockSearchSeq = 0;
 
 const statusLabels = {
   pending: "等待中",
@@ -195,6 +206,50 @@ function stockTagsText(tags) {
   return Array.isArray(tags) && tags.length ? tags.join("、") : "未设置标签";
 }
 
+function stockOptionLabel(stock) {
+  if (!stock) return "";
+  return `${stock.name || stock.code} ${stock.stock_id || stock.code}`;
+}
+
+function formatCatalogStatus(status = {}) {
+  if (!status.exists || !status.count) return "股票目录未更新";
+  const markets = Object.entries(status.markets || {})
+    .map(([market, count]) => `${market} ${count}`)
+    .join(" / ");
+  return `${markets || `${status.count} 只`} · 更新 ${formatStockDate(status.updated_at)}`;
+}
+
+function renderCatalogStatus() {
+  if (!els.stockCatalogStatus) return;
+  els.stockCatalogStatus.textContent = formatCatalogStatus(state.stockCatalogStatus);
+}
+
+function parseStockLabel(label) {
+  const text = String(label || "").trim();
+  const match = /^(.+?)\(([^()]+)\)$/.exec(text);
+  if (match) return { name: match[1].trim(), code: match[2].trim() };
+  return { name: text, code: "" };
+}
+
+function normalizeStockAnalysisItem(item) {
+  if (typeof item === "string") return parseStockLabel(item);
+  return {
+    name: String(item?.name || "").trim(),
+    code: String(item?.code || "").trim(),
+    reason: String(item?.reason || item?.evidence || "").trim(),
+    sentiment: String(item?.sentiment || "neutral").trim(),
+    mentions: Array.isArray(item?.mentions) ? item.mentions : [],
+  };
+}
+
+function findWatchedStock(item) {
+  const normalized = normalizeStockAnalysisItem(item);
+  return (state.stockDashboard.stocks || []).find((stock) => (
+    stock.status !== "archived" &&
+    ((normalized.code && stock.code === normalized.code) || (normalized.name && stock.name === normalized.name))
+  ));
+}
+
 function getStockSearchQuery() {
   return els.stockSearch?.value.trim() || "";
 }
@@ -218,6 +273,54 @@ function renderIndicatorItems(items, emptyText, type) {
             </div>
             ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
             ${mentions.length ? `<span class="indicator-mentions">${escapeHtml(mentions.slice(0, 4).join("、"))}</span>` : ""}
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderArticleStockItems(items, meta, sectors, keywords) {
+  if (!Array.isArray(items) || items.length === 0) {
+    return `<p class="muted-text">暂无个股提及</p>`;
+  }
+  const tagText = [...indicatorLabels(sectors, 6), ...(keywords || []).slice(0, 4)].join("、");
+  const articleTitle = meta.title || "";
+  const articleAuthor = meta.author || meta.account || "";
+
+  return `
+    <div class="indicator-list">
+      ${items.map((item) => {
+        const normalized = normalizeStockAnalysisItem(item);
+        const watched = findWatchedStock(item);
+        const label = [normalized.name, normalized.code ? `(${normalized.code})` : ""].filter(Boolean).join("") || "未命名";
+        const reason = normalized.reason || "";
+        const mentions = normalized.mentions || [];
+        const watchReason = [
+          articleTitle ? `来自文章《${articleTitle}》` : "来自文章分析",
+          articleAuthor ? `作者：${articleAuthor}` : "",
+          reason ? `提及理由：${reason}` : "",
+        ].filter(Boolean).join("；");
+        return `
+          <div class="indicator-item article-stock-item">
+            <div class="indicator-item-head">
+              <strong>${escapeHtml(label)}</strong>
+              <span class="sentiment-tag" data-sentiment="${escapeHtml(normalized.sentiment || "neutral")}">${escapeHtml(sentimentLabel(normalized.sentiment || "neutral"))}</span>
+            </div>
+            ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
+            ${mentions.length ? `<span class="indicator-mentions">${escapeHtml(mentions.slice(0, 4).join("、"))}</span>` : ""}
+            <div class="article-stock-actions">
+              ${watched ? `
+                <button type="button" class="secondary-btn article-stock-open-btn" data-stock-id="${escapeHtml(watched.stock_id)}">已关注，查看</button>
+              ` : (normalized.code || normalized.name) ? `
+                <button type="button" class="primary-btn article-stock-add-btn"
+                  data-query="${escapeHtml(normalized.code || normalized.name)}"
+                  data-tags="${escapeHtml(tagText)}"
+                  data-reason="${escapeHtml(watchReason)}">加入股票池</button>
+              ` : `
+                <span class="inline-status" data-tone="warning">缺少名称和代码，无法一键加入</span>
+              `}
+            </div>
           </div>
         `;
       }).join("")}
@@ -325,7 +428,7 @@ function renderStockSideList() {
         </span>
         <span class="author-row-meta">
           <span>${escapeHtml(rangeLabel(state.stockRange))} ${escapeHtml(formatPct(item.pct_change))}</span>
-          <span>${escapeHtml(formatPrice(item.latest_price))}</span>
+          <span>以来 ${escapeHtml(formatPct(item.since_added?.pct_change))}</span>
         </span>
         <span class="keyword-strip">${escapeHtml(stockTagsText(stock.tags))}</span>
       </button>
@@ -361,7 +464,10 @@ function renderStockRankings() {
         </span>
         <span class="stock-rank-tags">${escapeHtml(stockTagsText(stock.tags))}</span>
         <span class="stock-rank-price">${escapeHtml(formatPrice(item.latest_price))}</span>
-        <span class="stock-rank-pct" data-tone="${pctTone(item.pct_change)}">${escapeHtml(formatPct(item.pct_change))}</span>
+        <span class="stock-rank-pct">
+          <strong data-tone="${pctTone(item.pct_change)}">${escapeHtml(formatPct(item.pct_change))}</strong>
+          <small>加入以来 ${escapeHtml(formatPct(item.since_added?.pct_change))}</small>
+        </span>
       </button>
     `;
   }).join("");
@@ -372,8 +478,47 @@ function renderStockRankings() {
 }
 
 function renderStocks() {
+  renderCatalogStatus();
   renderStockSideList();
+  renderStockReviewQueue();
   renderStockRankings();
+}
+
+function renderStockReviewQueue() {
+  const items = state.stockReviewQueue || [];
+  els.stockReviewCount.textContent = `${items.length} 条`;
+  if (!items.length) {
+    els.stockReviewList.innerHTML = `<div class="empty-state compact">当前没有触发复盘规则的股票。</div>`;
+    return;
+  }
+
+  els.stockReviewList.innerHTML = items.slice(0, 8).map((item) => {
+    const stock = item.stock || {};
+    const article = item.related_articles?.[0] || {};
+    const targetType = stock.stock_id ? "stock" : "article";
+    const targetId = stock.stock_id || article.article_id || "";
+    return `
+      <button class="review-row" type="button" data-target-type="${escapeHtml(targetType)}" data-target-id="${escapeHtml(targetId)}">
+        <span class="status-badge" data-status="${item.type === "article_mentions_untracked" ? "existing" : "running"}">${escapeHtml(item.type === "article_mentions_untracked" ? "文章" : "价格")}</span>
+        <span class="review-main">
+          <strong>${escapeHtml(stock.name || item.reason || "待复盘")}</strong>
+          <span>${escapeHtml(item.reason || "")}</span>
+        </span>
+        <span class="review-action">${escapeHtml(item.action || "复盘")}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.stockReviewList.querySelectorAll(".review-row").forEach((button) => {
+    button.addEventListener("click", async () => {
+      if (button.dataset.targetType === "stock" && button.dataset.targetId) {
+        await selectStock(button.dataset.targetId);
+      } else if (button.dataset.targetId) {
+        await setViewMode("articles");
+        await selectArticle(button.dataset.targetId);
+      }
+    });
+  });
 }
 
 function renderArticles() {
@@ -670,7 +815,7 @@ function renderDetail(detail) {
 
       <section class="detail-section">
         <h4>个股</h4>
-        ${renderIndicatorItems(stocks, "暂无个股提及", "stock")}
+        ${renderArticleStockItems(stocks, meta, sectors, keywords)}
       </section>
 
       <section class="detail-section">
@@ -980,6 +1125,56 @@ async function savePersonalNote(articleId) {
   }
 }
 
+async function addArticleStockToPool(button) {
+  button.disabled = true;
+  button.textContent = "匹配中...";
+  try {
+    const query = button.dataset.query || "";
+    const search = await fetchJson(`/api/stocks/search?q=${encodeURIComponent(query)}&limit=6`);
+    const compactQuery = query.replace(/\s+/g, "").toUpperCase();
+    const stock = (search.items || []).find((item) => (
+      item.stock_id === compactQuery ||
+      item.code?.toUpperCase() === compactQuery ||
+      item.name?.replace(/\s+/g, "").toUpperCase() === compactQuery
+    )) || ((search.items || []).length === 1 ? search.items[0] : null);
+    if (!stock?.stock_id) throw new Error("未匹配到唯一股票，请先更新目录或手动添加");
+    button.textContent = "加入中...";
+    const result = await fetchJson("/api/stocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stock_id: stock.stock_id,
+        tags: button.dataset.tags || "",
+        watch_reason: button.dataset.reason || "",
+      }),
+    });
+    await refreshStocks();
+    button.textContent = "已加入，查看";
+    button.classList.remove("primary-btn", "article-stock-add-btn");
+    button.classList.add("secondary-btn", "article-stock-open-btn");
+    button.dataset.stockId = result.stock?.stock_id || "";
+    button.disabled = false;
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = error.message?.includes("已在关注池") ? "已关注" : "重试加入";
+    button.title = error.message || "加入失败";
+  }
+}
+
+function bindArticleStockActions() {
+  els.detail.querySelectorAll(".article-stock-add-btn").forEach((button) => {
+    button.addEventListener("click", () => addArticleStockToPool(button));
+  });
+  els.detail.querySelectorAll(".article-stock-open-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const stockId = button.dataset.stockId;
+      if (!stockId) return;
+      await setViewMode("stocks");
+      await selectStock(stockId);
+    });
+  });
+}
+
 function bindPersonalNoteActions() {
   const section = els.detail.querySelector(".personal-note-section");
   const articleId = section?.dataset.articleId || "";
@@ -1012,6 +1207,7 @@ function bindDetailFileActions() {
   const frameWrap = els.detail.querySelector("#offline-frame-wrap");
   const frame = els.detail.querySelector("#offline-frame");
   bindPersonalNoteActions();
+  bindArticleStockActions();
 
   els.detail.querySelector("[data-offline-url]")?.addEventListener("click", (event) => {
     const url = event.currentTarget.dataset.offlineUrl;
@@ -1100,6 +1296,7 @@ function renderStockDetail(detail) {
           ${metric("日表现", perf.day)}
           ${metric("五日表现", perf.five_day)}
           ${metric("周表现", perf.week)}
+          ${metric("加入以来", perf.since_added)}
           <div class="metric-item">
             <span>最新收盘价</span>
             <strong>${escapeHtml(formatPrice(perf.day?.latest_price))}</strong>
@@ -1119,6 +1316,8 @@ function renderStockDetail(detail) {
         <h4>关注理由</h4>
         <p>${escapeHtml(stock.watch_reason || "暂无关注理由")}</p>
       </section>
+
+      ${renderStockNoteSection(stock)}
 
       <section class="detail-section">
         <h4>价格快照</h4>
@@ -1154,6 +1353,7 @@ function renderStockDetail(detail) {
 
   els.detail.querySelector("#edit-stock-btn")?.addEventListener("click", () => startEditStock(stock));
   els.detail.querySelector("#archive-stock-btn")?.addEventListener("click", () => archiveSelectedStock(stock.stock_id));
+  bindStockNoteActions(stock.stock_id);
   els.detail.querySelectorAll("[data-article-id]").forEach((button) => {
     button.addEventListener("click", async () => {
       setViewMode("articles");
@@ -1162,10 +1362,241 @@ function renderStockDetail(detail) {
   });
 }
 
+function renderStockNoteSection(stock) {
+  return `
+    <section class="detail-section stock-note-section" data-stock-id="${escapeHtml(stock.stock_id || "")}">
+      <div class="personal-note-head">
+        <h4>股票笔记</h4>
+        <div class="personal-note-head-actions">
+          <div class="personal-note-mode" role="tablist" aria-label="股票笔记视图">
+            <button type="button" class="personal-note-mode-btn active" data-stock-note-mode="preview" role="tab" aria-selected="true">预览</button>
+            <button type="button" class="personal-note-mode-btn" data-stock-note-mode="edit" role="tab" aria-selected="false">编辑</button>
+          </div>
+          <span class="inline-status" id="stock-note-status">加载中...</span>
+        </div>
+      </div>
+      <div id="stock-note-preview" class="personal-note-preview" aria-live="polite"></div>
+      <textarea id="stock-note-input" class="personal-note-input" spellcheck="false" disabled hidden></textarea>
+      <div class="personal-note-actions">
+        <button type="button" class="primary-btn" id="save-stock-note-btn" disabled>保存笔记</button>
+        <span class="inline-status" id="stock-note-save-status"></span>
+      </div>
+    </section>
+  `;
+}
+
+function getStockNoteControls() {
+  const section = els.detail.querySelector(".stock-note-section");
+  if (!section) return null;
+  return {
+    section,
+    textarea: section.querySelector("#stock-note-input"),
+    preview: section.querySelector("#stock-note-preview"),
+    saveButton: section.querySelector("#save-stock-note-btn"),
+    modeButtons: section.querySelectorAll("[data-stock-note-mode]"),
+    status: section.querySelector("#stock-note-status"),
+    saveStatus: section.querySelector("#stock-note-save-status"),
+  };
+}
+
+function setStockNoteStatus(controls, text, tone = "") {
+  if (!controls?.status) return;
+  controls.status.textContent = text;
+  controls.status.dataset.tone = tone;
+}
+
+function setStockNoteSaveStatus(controls, text, tone = "") {
+  if (!controls?.saveStatus) return;
+  controls.saveStatus.textContent = text;
+  controls.saveStatus.dataset.tone = tone;
+}
+
+function updateStockNotePreview(controls) {
+  if (!controls?.preview || !controls?.textarea) return;
+  controls.preview.innerHTML = renderPersonalNoteMarkdown(controls.textarea.value);
+}
+
+function setStockNoteMode(controls, mode) {
+  if (!controls?.textarea || !controls?.preview) return;
+  const isEdit = mode === "edit";
+  controls.textarea.hidden = !isEdit;
+  controls.preview.hidden = isEdit;
+  if (!isEdit) updateStockNotePreview(controls);
+  controls.modeButtons?.forEach((button) => {
+    const active = button.dataset.stockNoteMode === (isEdit ? "edit" : "preview");
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
+async function loadStockNote(stockId) {
+  const controls = getStockNoteControls();
+  if (!controls || !stockId) return;
+  setStockNoteStatus(controls, "加载中...");
+  try {
+    const note = await fetchJson(`/api/stocks/${encodeURIComponent(stockId)}/note`);
+    const current = getStockNoteControls();
+    if (!current) return;
+    current.textarea.value = note.content || "";
+    current.textarea.dataset.savedValue = current.textarea.value;
+    current.textarea.disabled = false;
+    current.saveButton.disabled = false;
+    current.section.dataset.cleanStatus = note.exists ? `已保存 ${formatNoteTimestamp(note.updated_at)}` : "新笔记";
+    current.section.dataset.cleanTone = note.exists ? "success" : "";
+    updateStockNotePreview(current);
+    setStockNoteMode(current, note.exists ? "preview" : "edit");
+    setStockNoteStatus(current, current.section.dataset.cleanStatus, current.section.dataset.cleanTone);
+  } catch (error) {
+    const current = getStockNoteControls();
+    if (!current) return;
+    current.textarea.disabled = true;
+    current.saveButton.disabled = true;
+    setStockNoteStatus(current, `加载失败：${error.message}`, "danger");
+  }
+}
+
+async function saveStockNote(stockId) {
+  const controls = getStockNoteControls();
+  if (!controls || !stockId) return;
+  controls.saveButton.disabled = true;
+  controls.saveButton.textContent = "保存中...";
+  setStockNoteSaveStatus(controls, "正在写入 stock_note.md");
+  try {
+    const note = await fetchJson(`/api/stocks/${encodeURIComponent(stockId)}/note`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: controls.textarea.value }),
+    });
+    const current = getStockNoteControls();
+    if (!current) return;
+    current.textarea.value = note.content || "";
+    current.textarea.dataset.savedValue = current.textarea.value;
+    current.saveButton.disabled = false;
+    current.saveButton.textContent = "保存笔记";
+    current.section.dataset.cleanStatus = `已保存 ${formatNoteTimestamp(note.updated_at)}`;
+    current.section.dataset.cleanTone = "success";
+    updateStockNotePreview(current);
+    setStockNoteMode(current, "preview");
+    setStockNoteStatus(current, current.section.dataset.cleanStatus, "success");
+    setStockNoteSaveStatus(current, "保存完成", "success");
+  } catch (error) {
+    const current = getStockNoteControls();
+    if (!current) return;
+    current.saveButton.disabled = false;
+    current.saveButton.textContent = "重试保存";
+    setStockNoteSaveStatus(current, `保存失败：${error.message}`, "danger");
+  }
+}
+
+function bindStockNoteActions(stockId) {
+  const controls = getStockNoteControls();
+  if (!controls || !stockId) return;
+  controls.textarea?.addEventListener("input", () => {
+    const changed = controls.textarea.value !== (controls.textarea.dataset.savedValue || "");
+    setStockNoteStatus(
+      controls,
+      changed ? "未保存" : (controls.section.dataset.cleanStatus || "已保存"),
+      changed ? "warning" : (controls.section.dataset.cleanTone || "success")
+    );
+    setStockNoteSaveStatus(controls, "");
+    updateStockNotePreview(controls);
+  });
+  controls.modeButtons?.forEach((button) => {
+    button.addEventListener("click", () => setStockNoteMode(controls, button.dataset.stockNoteMode || "preview"));
+  });
+  controls.saveButton?.addEventListener("click", () => saveStockNote(stockId));
+  loadStockNote(stockId);
+}
+
+function renderStockCandidates() {
+  if (!els.stockCandidateList) return;
+  if (state.editingStockId) {
+    els.stockCandidateList.innerHTML = "";
+    return;
+  }
+  const query = els.stockQuery?.value.trim() || "";
+  if (state.stockCandidate) {
+    els.stockCandidateList.innerHTML = `
+      <div class="stock-candidate-selected">
+        <strong>${escapeHtml(state.stockCandidate.name || state.stockCandidate.code)}</strong>
+        <span>${escapeHtml(state.stockCandidate.stock_id || "")} · ${escapeHtml(state.stockCandidate.market || "")}</span>
+      </div>
+    `;
+    return;
+  }
+  if (!query) {
+    els.stockCandidateList.innerHTML = "";
+    return;
+  }
+  if (!state.stockCandidates.length) {
+    els.stockCandidateList.innerHTML = `<div class="empty-state compact">未找到候选股票。</div>`;
+    return;
+  }
+  els.stockCandidateList.innerHTML = state.stockCandidates.map((stock) => `
+    <button type="button" class="stock-candidate-row" data-stock-id="${escapeHtml(stock.stock_id)}">
+      <span>
+        <strong>${escapeHtml(stock.name || stock.code)}</strong>
+        <small>${escapeHtml(stock.stock_id || stock.code)}</small>
+      </span>
+      <em>${escapeHtml(stock.market || stock.exchange || "")}</em>
+    </button>
+  `).join("");
+  els.stockCandidateList.querySelectorAll("[data-stock-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const stock = state.stockCandidates.find((item) => item.stock_id === button.dataset.stockId);
+      if (!stock) return;
+      state.stockCandidate = stock;
+      els.stockSelectedId.value = stock.stock_id || "";
+      els.stockQuery.value = stockOptionLabel(stock);
+      renderStockCandidates();
+    });
+  });
+}
+
+async function searchStockCandidates(query) {
+  const currentSeq = ++stockSearchSeq;
+  state.stockCandidate = null;
+  els.stockSelectedId.value = "";
+  if (!query.trim()) {
+    state.stockCandidates = [];
+    renderStockCandidates();
+    return;
+  }
+  try {
+    const data = await fetchJson(`/api/stocks/search?q=${encodeURIComponent(query)}&limit=8`);
+    if (currentSeq !== stockSearchSeq) return;
+    state.stockCandidates = data.items || [];
+    state.stockCatalogStatus = data.status || state.stockCatalogStatus;
+    renderStockCandidates();
+    renderCatalogStatus();
+  } catch (error) {
+    state.stockCandidates = [];
+    els.stockCandidateList.innerHTML = `<div class="empty-state compact">${escapeHtml(error.message || "搜索失败")}</div>`;
+  }
+}
+
+async function resolveStockCandidateForSubmit() {
+  if (state.stockCandidate?.stock_id) return state.stockCandidate;
+  const query = els.stockQuery.value.trim();
+  if (!query) return null;
+  const data = await fetchJson(`/api/stocks/search?q=${encodeURIComponent(query)}&limit=6`);
+  const compactQuery = query.replace(/\s+/g, "").toUpperCase();
+  const candidates = data.items || [];
+  return candidates.find((stock) => (
+    stock.stock_id === compactQuery ||
+    stock.code?.toUpperCase() === compactQuery ||
+    stock.name?.replace(/\s+/g, "").toUpperCase() === compactQuery
+  )) || (candidates.length === 1 ? candidates[0] : null);
+}
+
 function resetStockForm() {
   state.editingStockId = "";
+  state.stockCandidate = null;
+  state.stockCandidates = [];
   els.stockForm.reset();
-  els.stockCode.disabled = false;
+  els.stockQuery.disabled = false;
+  els.stockSelectedId.value = "";
+  renderStockCandidates();
   els.stockFormTitle.textContent = "添加股票";
   els.saveStockBtn.textContent = "添加股票";
   els.cancelStockEditBtn.hidden = true;
@@ -1175,13 +1606,15 @@ function resetStockForm() {
 
 function startEditStock(stock) {
   state.editingStockId = stock.stock_id || "";
+  state.stockCandidate = stock;
+  state.stockCandidates = [];
   els.stockFormTitle.textContent = "编辑股票";
   els.saveStockBtn.textContent = "保存修改";
   els.cancelStockEditBtn.hidden = false;
-  els.stockCode.value = stock.stock_id || stock.code || "";
-  els.stockCode.disabled = true;
-  els.stockName.value = stock.name || "";
-  els.stockExchange.value = stock.exchange || "";
+  els.stockQuery.value = stockOptionLabel(stock);
+  els.stockQuery.disabled = true;
+  els.stockSelectedId.value = stock.stock_id || "";
+  renderStockCandidates();
   els.stockTags.value = (stock.tags || []).join("、");
   els.stockReason.value = stock.watch_reason || "";
   els.stockFormStatus.textContent = "正在编辑当前股票";
@@ -1191,19 +1624,23 @@ function startEditStock(stock) {
 
 async function submitStockForm(event) {
   event.preventDefault();
-  const payload = {
-    code: els.stockCode.value,
-    exchange: els.stockExchange.value,
-    name: els.stockName.value,
-    tags: els.stockTags.value,
-    watch_reason: els.stockReason.value,
-  };
   const isEdit = Boolean(state.editingStockId);
   els.saveStockBtn.disabled = true;
   els.stockFormStatus.textContent = isEdit ? "正在保存修改..." : "正在添加股票...";
   els.stockFormStatus.dataset.tone = "";
 
   try {
+    const candidate = isEdit ? null : await resolveStockCandidateForSubmit();
+    if (!isEdit && !candidate?.stock_id) {
+      els.stockFormStatus.textContent = "请先选择股票候选";
+      els.stockFormStatus.dataset.tone = "warning";
+      return;
+    }
+    const payload = {
+      ...(isEdit ? {} : { stock_id: candidate.stock_id }),
+      tags: els.stockTags.value,
+      watch_reason: els.stockReason.value,
+    };
     const result = await fetchJson(isEdit
       ? `/api/stocks/${encodeURIComponent(state.editingStockId)}`
       : "/api/stocks", {
@@ -1401,9 +1838,43 @@ async function selectArticle(articleId) {
 
 async function refreshStocks() {
   const query = getStockSearchQuery();
-  const data = await fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(query)}`);
+  const [data, review] = await Promise.all([
+    fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(query)}`),
+    fetchJson("/api/stocks/review-queue"),
+  ]);
   state.stockDashboard = data;
+  state.stockReviewQueue = review.items || [];
   renderStocks();
+}
+
+async function refreshStockCatalogStatus() {
+  const status = await fetchJson("/api/stocks/catalog/status");
+  state.stockCatalogStatus = status;
+  renderCatalogStatus();
+  return status;
+}
+
+async function updateStockCatalog() {
+  els.updateStockCatalogBtn.disabled = true;
+  els.updateStockCatalogBtn.textContent = "更新中...";
+  els.stockFormStatus.textContent = "正在更新股票目录";
+  els.stockFormStatus.dataset.tone = "";
+  try {
+    const result = await fetchJson("/api/stocks/catalog/update", { method: "POST" });
+    state.stockCatalogStatus = result.status || await refreshStockCatalogStatus();
+    state.stockCandidate = null;
+    state.stockCandidates = [];
+    renderCatalogStatus();
+    renderStockCandidates();
+    els.stockFormStatus.textContent = `目录已更新：${state.stockCatalogStatus.count || result.total || 0} 只`;
+    els.stockFormStatus.dataset.tone = "success";
+  } catch (error) {
+    els.stockFormStatus.textContent = error.message || "目录更新失败";
+    els.stockFormStatus.dataset.tone = "danger";
+  } finally {
+    els.updateStockCatalogBtn.disabled = false;
+    els.updateStockCatalogBtn.textContent = "更新股票目录";
+  }
 }
 
 async function selectStock(stockId) {
@@ -1453,14 +1924,18 @@ function closeArticleReader() {
 }
 
 async function refreshAll() {
-  const [{ articles }, { authors }, stockDashboard] = await Promise.all([
+  const [{ articles }, { authors }, stockDashboard, review, catalogStatus] = await Promise.all([
     fetchJson("/api/articles"),
     fetchJson("/api/authors"),
     fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(getStockSearchQuery())}`),
+    fetchJson("/api/stocks/review-queue"),
+    fetchJson("/api/stocks/catalog/status"),
   ]);
   state.articles = articles;
   state.authors = authors;
   state.stockDashboard = stockDashboard;
+  state.stockReviewQueue = review.items || [];
+  state.stockCatalogStatus = catalogStatus;
   renderAll();
 
   if (state.activeView === "stocks") {
@@ -1562,6 +2037,15 @@ els.allStocksBtn.addEventListener("click", async () => {
 
 els.stockForm.addEventListener("submit", submitStockForm);
 els.cancelStockEditBtn.addEventListener("click", resetStockForm);
+els.updateStockCatalogBtn.addEventListener("click", updateStockCatalog);
+els.stockQuery.addEventListener("input", () => {
+  state.stockCandidate = null;
+  els.stockSelectedId.value = "";
+  window.clearTimeout(stockSearchTimer);
+  const query = els.stockQuery.value.trim();
+  stockSearchTimer = window.setTimeout(() => searchStockCandidates(query), 180);
+  renderStockCandidates();
+});
 
 els.stockRangeTabs.forEach((button) => {
   button.addEventListener("click", async () => {

@@ -4,9 +4,20 @@ import { ensureDir } from "../storage/paths.mjs";
 
 export const STOCKS_FILE_NAME = "stocks.jsonl";
 export const DAILY_PRICES_FILE_NAME = "daily_prices.jsonl";
+export const STOCK_NOTES_DIR_NAME = "notes";
+export const STOCK_CATALOG_DIR_NAME = "catalog";
+export const STOCK_UNIVERSE_FILE_NAME = "stock_universe.jsonl";
+export const STOCK_CATALOG_META_FILE_NAME = "update_meta.json";
+export const STOCK_NOTE_MAX_BYTES = 512 * 1024;
 
-const VALID_RANGES = new Set(["day", "5d", "week"]);
+const VALID_RANGES = new Set(["day", "5d", "week", "since_added"]);
 const VALID_ORDERS = new Set(["asc", "desc"]);
+const REVIEW_THRESHOLDS = Object.freeze({
+    sinceAddedDrop: -5,
+    dayAbsMove: 5,
+    fiveDayAbsMove: 12,
+    articleMentionCount: 2,
+});
 const TRADE_DATES = [
     "2026-04-24",
     "2026-04-27",
@@ -86,6 +97,27 @@ function pricePath(dataDir) {
     return path.join(dataDir, DAILY_PRICES_FILE_NAME);
 }
 
+function catalogDir(dataDir) {
+    return path.join(dataDir, STOCK_CATALOG_DIR_NAME);
+}
+
+function catalogPath(dataDir) {
+    return path.join(catalogDir(dataDir), STOCK_UNIVERSE_FILE_NAME);
+}
+
+function catalogMetaPath(dataDir) {
+    return path.join(catalogDir(dataDir), STOCK_CATALOG_META_FILE_NAME);
+}
+
+function notesDir(dataDir) {
+    return path.join(dataDir, STOCK_NOTES_DIR_NAME);
+}
+
+function stockNotePath(dataDir, stockId) {
+    const safeId = String(stockId || "").toUpperCase().replace(/[^A-Z0-9.]/g, "_");
+    return path.join(notesDir(dataDir), `${safeId}.md`);
+}
+
 function hashText(value) {
     return [...String(value || "")].reduce((sum, char) => sum + char.charCodeAt(0), 0);
 }
@@ -110,6 +142,42 @@ function parseStockInput(input = {}) {
     return { code, exchange };
 }
 
+function inferStockExchange(code, market = "") {
+    const normalizedCode = String(code || "").trim().toUpperCase();
+    const normalizedMarket = String(market || "").trim().toUpperCase();
+    if (["SH", "SZ", "BJ", "HK", "US"].includes(normalizedMarket)) return normalizedMarket;
+    if (/港|HK/.test(String(market || ""))) return "HK";
+    if (/美|US/.test(String(market || ""))) return "US";
+    if (/^[A-Z.]+$/.test(normalizedCode)) return "US";
+    if (/^[69]/.test(normalizedCode)) return "SH";
+    if (/^[023]/.test(normalizedCode)) return "SZ";
+    if (/^[48]/.test(normalizedCode)) return "BJ";
+    return "CN";
+}
+
+function marketName(exchange, fallback = "") {
+    if (fallback) return String(fallback);
+    if (["SH", "SZ", "BJ"].includes(exchange)) return "A股";
+    if (exchange === "HK") return "港股";
+    if (exchange === "US") return "美股";
+    return "其他";
+}
+
+function normalizeStockId(value) {
+    const text = String(value || "").trim().toUpperCase();
+    if (!text) return "";
+    const parsed = parseStockInput({ stock_id: text });
+    return parsed.code ? buildStockId(parsed.exchange, parsed.code) : "";
+}
+
+function pickFirst(record, keys) {
+    for (const key of keys) {
+        const value = record?.[key];
+        if (value !== undefined && value !== null && String(value).trim()) return String(value).trim();
+    }
+    return "";
+}
+
 function normalizeTags(tags) {
     const values = Array.isArray(tags)
         ? tags
@@ -117,8 +185,173 @@ function normalizeTags(tags) {
     return [...new Set(values.map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 12);
 }
 
+function formatYamlValue(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map((item) => JSON.stringify(String(item))).join(", ")}]`;
+    }
+    if (value === null || value === undefined) return '""';
+    return JSON.stringify(String(value));
+}
+
+function ensureTrailingNewline(text) {
+    return text.endsWith("\n") ? text : `${text}\n`;
+}
+
+function getDateKey(value) {
+    const text = String(value || "");
+    const match = text.match(/(\d{4})[-/年](\d{1,2})[-/月](\d{1,2})/);
+    if (!match) return "";
+    const [, year, month, day] = match;
+    return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function formatSignedPct(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "--";
+    return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
 export function buildStockId(exchange, code) {
     return `${String(exchange || "").trim().toUpperCase()}.${String(code || "").trim().toUpperCase()}`;
+}
+
+export function normalizeStockCatalogRecord(record = {}, options = {}) {
+    const fromStockId = normalizeStockId(record.stock_id || record.symbol || "");
+    const [stockIdExchange, stockIdCode] = fromStockId ? fromStockId.split(".") : ["", ""];
+    const rawCode = pickFirst(record, ["code", "symbol", "股票代码", "A股代码", "代码", "证券代码", "ticker"]) || stockIdCode;
+    const code = rawCode.replace(/^(SH|SZ|BJ|HK|US)[.\-_:]?/i, "").replace(/\s+/g, "").toUpperCase();
+    const rawExchange = pickFirst(record, ["exchange", "market_code", "交易所"]) || stockIdExchange;
+    const rawMarket = pickFirst(record, ["market", "市场", "板块"]);
+    const exchange = rawExchange ? rawExchange.toUpperCase() : inferStockExchange(code, rawMarket);
+    const name = pickFirst(record, ["name", "股票简称", "A股简称", "简称", "公司简称", "名称", "security_name"]);
+    if (!code || !name) throw new Error("股票目录记录缺少代码或名称");
+    if (!/^[A-Z0-9.]+$/.test(code)) throw new Error(`股票代码格式不支持：${code}`);
+    const stock_id = buildStockId(exchange, code);
+    return {
+        stock_id,
+        code,
+        exchange,
+        name,
+        market: marketName(exchange, rawMarket),
+        industry: pickFirst(record, ["industry", "所属行业", "行业"]),
+        source: record.source || options.source || "manual",
+        updated_at: record.updated_at || nowIso(options),
+    };
+}
+
+export function readStockCatalog(dataDir, options = {}) {
+    ensureStockDataStore(dataDir, options);
+    const records = readJsonl(catalogPath(dataDir));
+    const byId = new Map();
+    for (const record of records) {
+        const normalized = normalizeStockCatalogRecord(record, options);
+        byId.set(normalized.stock_id, normalized);
+    }
+    return [...byId.values()];
+}
+
+export function writeStockCatalog(dataDir, records, options = {}) {
+    ensureStockDataStore(dataDir, options);
+    ensureDir(catalogDir(dataDir));
+    const byId = new Map();
+    for (const record of records) {
+        const normalized = normalizeStockCatalogRecord(record, options);
+        byId.set(normalized.stock_id, normalized);
+    }
+    const normalized = [...byId.values()];
+    writeJsonl(catalogPath(dataDir), normalized);
+    const markets = normalized.reduce((acc, item) => {
+        acc[item.market] = (acc[item.market] || 0) + 1;
+        return acc;
+    }, {});
+    const meta = {
+        source: options.source || "manual",
+        updated_at: nowIso(options),
+        total: normalized.length,
+        markets,
+        ...(options.meta || {}),
+    };
+    fs.writeFileSync(catalogMetaPath(dataDir), JSON.stringify(meta, null, 2), "utf-8");
+    return { records: normalized, meta };
+}
+
+export function getStockCatalogStatus(dataDir, options = {}) {
+    ensureStockDataStore(dataDir, options);
+    const filePath = catalogPath(dataDir);
+    const metaPath = catalogMetaPath(dataDir);
+    const exists = fs.existsSync(filePath);
+    const meta = fs.existsSync(metaPath)
+        ? JSON.parse(fs.readFileSync(metaPath, "utf-8"))
+        : {};
+    const count = exists ? readJsonl(filePath).length : 0;
+    return {
+        exists,
+        count,
+        source: meta.source || "",
+        updated_at: meta.updated_at || (exists ? fs.statSync(filePath).mtime.toISOString() : ""),
+        markets: meta.markets || {},
+        file: path.relative(dataDir, filePath),
+    };
+}
+
+function stockSearchScore(stock, query) {
+    const normalizedQuery = String(query || "").trim();
+    if (!normalizedQuery) return 0;
+    const upper = normalizedQuery.toUpperCase().replace(/\s+/g, "");
+    const lower = normalizedQuery.toLowerCase().replace(/\s+/g, "");
+    const name = String(stock.name || "");
+    const code = String(stock.code || "").toUpperCase();
+    const stockId = String(stock.stock_id || "").toUpperCase();
+    const compactName = name.replace(/\s+/g, "");
+    if (stockId === upper) return 1000;
+    if (code === upper) return 950;
+    if (compactName === normalizedQuery.replace(/\s+/g, "")) return 900;
+    if (compactName.startsWith(normalizedQuery)) return 820;
+    if (code.startsWith(upper)) return 780;
+    if (stockId.includes(upper)) return 700;
+    if (compactName.includes(normalizedQuery)) return 650;
+    if (`${stock.market || ""} ${stock.exchange || ""} ${stock.industry || ""}`.toLowerCase().includes(lower)) return 200;
+    return 0;
+}
+
+export function searchStockCatalog(dataDir, query, options = {}) {
+    const limit = Math.max(1, Math.min(Number(options.limit || 20), 50));
+    return readStockCatalog(dataDir, options)
+        .map((stock) => ({ stock, score: stockSearchScore(stock, query) }))
+        .filter((item) => item.score > 0)
+        .sort((left, right) => right.score - left.score || left.stock.name.localeCompare(right.stock.name, "zh-CN"))
+        .slice(0, limit)
+        .map((item) => item.stock);
+}
+
+export function findStockCatalogRecord(dataDir, stockId, options = {}) {
+    const targetId = normalizeStockId(stockId);
+    if (!targetId) return null;
+    return readStockCatalog(dataDir, options).find((stock) => stock.stock_id === targetId) || null;
+}
+
+function resolveStockCatalogRecord(dataDir, input = {}, options = {}) {
+    const status = getStockCatalogStatus(dataDir, options);
+    if (!status.exists || status.count === 0) throw new Error("股票目录为空，请先更新股票目录");
+    if (input.stock_id) {
+        const stock = findStockCatalogRecord(dataDir, input.stock_id, options);
+        if (!stock) throw new Error("股票目录中未找到该股票，请先更新股票目录");
+        return stock;
+    }
+    const query = String(input.query || "").trim();
+    if (query) {
+        const matches = searchStockCatalog(dataDir, query, { ...options, limit: 6 });
+        const compactQuery = query.replace(/\s+/g, "").toUpperCase();
+        const exact = matches.find((stock) => (
+            stock.stock_id === compactQuery ||
+            stock.code.toUpperCase() === compactQuery ||
+            stock.name.replace(/\s+/g, "").toUpperCase() === compactQuery
+        ));
+        if (exact) return exact;
+        if (matches.length === 1) return matches[0];
+        if (matches.length > 1) throw new Error("找到多个候选股票，请先选择具体股票");
+    }
+    throw new Error("请选择股票目录中的股票");
 }
 
 export function normalizeStockInput(input = {}, options = {}) {
@@ -134,11 +367,92 @@ export function normalizeStockInput(input = {}, options = {}) {
         code,
         exchange,
         name,
+        market: input.market || marketName(exchange),
         added_at: timestamp,
         updated_at: timestamp,
         status: input.status === "archived" ? "archived" : "active",
         tags: normalizeTags(input.tags),
         watch_reason: String(input.watch_reason || "").trim(),
+    };
+}
+
+export function buildStockNoteTemplate(stock, options = {}) {
+    const noteDate = getDateKey(options.date || options.now?.toISOString?.() || new Date().toISOString());
+    const frontmatter = [
+        ["schema", "stock_note/v1"],
+        ["stock_id", stock.stock_id || ""],
+        ["code", stock.code || ""],
+        ["exchange", stock.exchange || ""],
+        ["name", stock.name || ""],
+        ["created_at", noteDate],
+        ["updated_at", noteDate],
+        ["tags", stock.tags || []],
+    ];
+
+    return ensureTrailingNewline([
+        "---",
+        ...frontmatter.map(([key, value]) => `${key}: ${formatYamlValue(value)}`),
+        "---",
+        "",
+        `# ${stock.name || stock.stock_id || "股票笔记"}`,
+        "",
+        "## 当前判断",
+        "",
+        "",
+        "## 关注理由",
+        "",
+        stock.watch_reason || "",
+        "",
+        "## 风险点",
+        "",
+        "- ",
+        "",
+        "## 验证指标",
+        "",
+        "- ",
+        "",
+        "## 复盘记录",
+        "",
+    ].join("\n"));
+}
+
+export function readStockNote(dataDir, stock, options = {}) {
+    ensureStockDataStore(dataDir, options);
+    ensureDir(notesDir(dataDir));
+    const notePath = stockNotePath(dataDir, stock.stock_id);
+    if (!fs.existsSync(notePath)) {
+        return {
+            exists: false,
+            content: buildStockNoteTemplate(stock, options),
+            updated_at: "",
+            note_file: path.relative(dataDir, notePath),
+        };
+    }
+
+    const stat = fs.statSync(notePath);
+    return {
+        exists: true,
+        content: fs.readFileSync(notePath, "utf-8"),
+        updated_at: stat.mtime.toISOString(),
+        note_file: path.relative(dataDir, notePath),
+    };
+}
+
+export function writeStockNote(dataDir, stock, content, options = {}) {
+    ensureStockDataStore(dataDir, options);
+    ensureDir(notesDir(dataDir));
+    if (typeof content !== "string") throw new Error("笔记内容必须是字符串");
+    if (Buffer.byteLength(content, "utf-8") > STOCK_NOTE_MAX_BYTES) throw new Error("笔记内容过大");
+
+    const notePath = stockNotePath(dataDir, stock.stock_id);
+    const savedContent = ensureTrailingNewline(content);
+    fs.writeFileSync(notePath, savedContent, "utf-8");
+    const stat = fs.statSync(notePath);
+    return {
+        exists: true,
+        content: savedContent,
+        updated_at: stat.mtime.toISOString(),
+        note_file: path.relative(dataDir, notePath),
     };
 }
 
@@ -185,17 +499,6 @@ function generateTestPrices(stock, options = {}) {
 
 function ensureStockDataStore(dataDir, options = {}) {
     ensureDir(dataDir);
-    const shouldSeed = options.seed !== false;
-    const stocksFile = stockPath(dataDir);
-    const pricesFile = pricePath(dataDir);
-    if (!shouldSeed || fs.existsSync(stocksFile) || fs.existsSync(pricesFile)) return;
-
-    const stocks = SAMPLE_STOCKS.map((sample, index) => normalizeStockInput(sample, {
-        now: new Date(Date.UTC(2026, 4, 8, 7, 30 + index)),
-    }));
-    const prices = stocks.flatMap((stock) => generateTestPrices(stock));
-    writeJsonl(stocksFile, stocks);
-    writeJsonl(pricesFile, prices);
 }
 
 export function readStocks(dataDir, options = {}) {
@@ -228,7 +531,13 @@ function seedPricesIfMissing(dataDir, stock, options = {}) {
 
 export function addStock(dataDir, input, options = {}) {
     const stocks = readStocks(dataDir, options);
-    const nextStock = normalizeStockInput(input, options);
+    const catalogStock = resolveStockCatalogRecord(dataDir, input, options);
+    const nextStock = normalizeStockInput({
+        ...catalogStock,
+        tags: input.tags,
+        watch_reason: input.watch_reason,
+        status: input.status,
+    }, options);
     const existing = stocks.find((stock) => stock.stock_id === nextStock.stock_id);
     if (existing?.status === "active") throw new Error("股票已在关注池中");
 
@@ -284,6 +593,7 @@ function getReferenceIndex(records, latestIndex, range) {
         const weekStart = getWeekStart(records[latestIndex].trade_date);
         return records.findIndex((item) => item.trade_date >= weekStart);
     }
+    if (range === "since_added") return records.findIndex((item) => item.trade_date >= getDateKey(records[latestIndex].stock_added_at));
     return latestIndex - 1;
 }
 
@@ -291,6 +601,7 @@ export function buildStockPerformance(stock, prices, range = "day") {
     const normalizedRange = VALID_RANGES.has(range) ? range : "day";
     const records = prices
         .filter((price) => price.stock_id === stock.stock_id)
+        .map((price) => ({ ...price, stock_added_at: stock.added_at }))
         .sort((left, right) => left.trade_date.localeCompare(right.trade_date));
     if (records.length === 0) {
         return {
@@ -338,6 +649,16 @@ export function buildStockPerformance(stock, prices, range = "day") {
     };
 }
 
+function withDerivedPerformances(item) {
+    const stock = item.stock;
+    const priceRecords = item.price_records || [];
+    const { price_records: _priceRecords, ...rest } = item;
+    return {
+        ...rest,
+        since_added: buildStockPerformance(stock, priceRecords, "since_added"),
+    };
+}
+
 export function buildStockRankings(stocks, prices, options = {}) {
     const range = VALID_RANGES.has(options.range) ? options.range : "day";
     const order = VALID_ORDERS.has(options.order) ? options.order : "desc";
@@ -351,7 +672,10 @@ export function buildStockRankings(stocks, prices, options = {}) {
             const haystack = `${stock.stock_id} ${stock.code} ${stock.name} ${(stock.tags || []).join(" ")}`.toLowerCase();
             return haystack.includes(query);
         })
-        .map((stock) => buildStockPerformance(stock, prices, range))
+        .map((stock) => ({
+            ...buildStockPerformance(stock, prices, range),
+            price_records: prices.filter((price) => price.stock_id === stock.stock_id),
+        }))
         .sort((left, right) => {
             const leftMissing = left.pct_change === null;
             const rightMissing = right.pct_change === null;
@@ -362,7 +686,74 @@ export function buildStockRankings(stocks, prices, options = {}) {
                 ? left.pct_change - right.pct_change
                 : right.pct_change - left.pct_change;
         })
-        .map((item, index) => ({ ...item, rank: index + 1 }));
+        .map((item, index) => withDerivedPerformances({ ...item, rank: index + 1 }));
+}
+
+function buildReviewItem({ type, stock, reason, metric, related_articles = [], action }) {
+    const stockPart = stock?.stock_id || "article";
+    return {
+        id: `${type}_${stockPart}_${String(metric?.range || metric?.value || reason).replace(/[^a-zA-Z0-9_.-]/g, "_")}`,
+        type,
+        stock: stock || null,
+        reason,
+        metric,
+        related_articles,
+        action,
+    };
+}
+
+export function buildReviewQueue(stocks, prices, articleMentions = [], options = {}) {
+    const thresholds = { ...REVIEW_THRESHOLDS, ...(options.thresholds || {}) };
+    const activeStocks = stocks.filter((stock) => stock.status !== "archived");
+    const queue = [];
+
+    for (const stock of activeStocks) {
+        const day = buildStockPerformance(stock, prices, "day");
+        const fiveDay = buildStockPerformance(stock, prices, "5d");
+        const sinceAdded = buildStockPerformance(stock, prices, "since_added");
+
+        if (Number.isFinite(sinceAdded.pct_change) && sinceAdded.pct_change <= thresholds.sinceAddedDrop) {
+            queue.push(buildReviewItem({
+                type: "since_added_drop",
+                stock,
+                reason: `加入以来跌幅达到 ${formatSignedPct(sinceAdded.pct_change)}`,
+                metric: { range: "since_added", pct_change: sinceAdded.pct_change, threshold: thresholds.sinceAddedDrop },
+                action: "复盘加入理由是否仍成立",
+            }));
+        }
+        if (Number.isFinite(day.pct_change) && Math.abs(day.pct_change) >= thresholds.dayAbsMove) {
+            queue.push(buildReviewItem({
+                type: "day_move",
+                stock,
+                reason: `日涨跌幅达到 ${formatSignedPct(day.pct_change)}`,
+                metric: { range: "day", pct_change: day.pct_change, threshold: thresholds.dayAbsMove },
+                action: "检查是否有新闻或文章催化",
+            }));
+        }
+        if (Number.isFinite(fiveDay.pct_change) && Math.abs(fiveDay.pct_change) >= thresholds.fiveDayAbsMove) {
+            queue.push(buildReviewItem({
+                type: "five_day_move",
+                stock,
+                reason: `五日涨跌幅达到 ${formatSignedPct(fiveDay.pct_change)}`,
+                metric: { range: "5d", pct_change: fiveDay.pct_change, threshold: thresholds.fiveDayAbsMove },
+                action: "复盘趋势延续性和风险",
+            }));
+        }
+    }
+
+    for (const mention of articleMentions) {
+        if ((mention.count || 0) < thresholds.articleMentionCount || mention.in_pool) continue;
+        queue.push(buildReviewItem({
+            type: "article_mentions_untracked",
+            stock: mention.stock || null,
+            reason: `${mention.name || mention.code || "未关注股票"} 被文章提及 ${mention.count} 次但尚未加入股票池`,
+            metric: { value: mention.count, threshold: thresholds.articleMentionCount },
+            related_articles: mention.articles || [],
+            action: "判断是否需要加入股票池",
+        }));
+    }
+
+    return queue;
 }
 
 export function loadStockDashboard(dataDir, options = {}) {
@@ -398,6 +789,7 @@ export function loadStockDetail(dataDir, stockId, options = {}) {
             day: buildStockPerformance(stock, prices, "day"),
             five_day: buildStockPerformance(stock, prices, "5d"),
             week: buildStockPerformance(stock, prices, "week"),
+            since_added: buildStockPerformance(stock, prices, "since_added"),
         },
     };
 }

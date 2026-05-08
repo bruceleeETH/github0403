@@ -2,14 +2,29 @@
 import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
+import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME, STOCK_TRACKING_DIR } from "../src/config/constants.mjs";
 import { analyzeArticle, isModelAnalysis, sanitizeModelAnalysis } from "../src/core/analyze-article.mjs";
 import { captureArticleToLocal } from "../src/core/capture-article.mjs";
 import { buildMarkdown } from "../src/core/export-article.mjs";
 import { listAccountArticles } from "../src/core/list-account-articles.mjs";
 import { readPersonalNote, writePersonalNote } from "../src/core/personal-note.mjs";
-import { addStock, archiveStock, loadStockDashboard, loadStockDetail, updateStock } from "../src/core/stock-tracker.mjs";
+import {
+    addStock,
+    archiveStock,
+    buildReviewQueue,
+    getStockCatalogStatus,
+    loadStockDashboard,
+    loadStockDetail,
+    readDailyPrices,
+    readStockNote,
+    readStocks,
+    searchStockCatalog,
+    updateStock,
+    writeStockNote,
+} from "../src/core/stock-tracker.mjs";
 import { cleanAuthorName, loadArticleIndex, upsertIndexRecord } from "../src/storage/article-index.mjs";
 import { buildIndexRecord } from "../src/storage/file-layout.mjs";
 import { encodeLibraryPath, safeJoin } from "../src/storage/paths.mjs";
@@ -19,8 +34,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const WEB_ROOT = path.join(PROJECT_ROOT, "webapp");
+const STOCK_CATALOG_UPDATE_SCRIPT = path.join(PROJECT_ROOT, "scripts", "update_stock_catalog.py");
+const STOCK_CATALOG_VENV_PYTHON = path.join(PROJECT_ROOT, ".venv", "bin", "python");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT || 4318);
+const execFileAsync = promisify(execFile);
 
 function readJsonBody(req) {
     return new Promise((resolve, reject) => {
@@ -236,6 +254,88 @@ function findRelatedArticlesForStock(stock, limit = 20) {
         }));
 }
 
+function parseArticleStockLabel(label) {
+    if (label && typeof label === "object") {
+        return {
+            name: String(label.name || "").trim(),
+            code: String(label.code || "").trim(),
+        };
+    }
+    const text = String(label || "").trim();
+    const match = text.match(/^(.+?)\(([^()]+)\)$/);
+    if (match) {
+        return {
+            name: match[1].trim(),
+            code: match[2].trim(),
+        };
+    }
+    return { name: text, code: "" };
+}
+
+function buildArticleStockMentions(records, stocks) {
+    const activeStocks = stocks.filter((stock) => stock.status !== "archived");
+    const byCode = new Set(activeStocks.map((stock) => String(stock.code || "")));
+    const byName = new Set(activeStocks.map((stock) => String(stock.name || "")));
+    const grouped = new Map();
+
+    for (const record of records) {
+        for (const label of record.stocks || []) {
+            const parsed = parseArticleStockLabel(label);
+            if (!parsed.name && !parsed.code) continue;
+            const key = parsed.code || parsed.name;
+            if (!grouped.has(key)) {
+                grouped.set(key, {
+                    stock: parsed.code ? {
+                        stock_id: "",
+                        code: parsed.code,
+                        exchange: "",
+                        name: parsed.name || parsed.code,
+                    } : null,
+                    code: parsed.code,
+                    name: parsed.name || parsed.code,
+                    count: 0,
+                    in_pool: false,
+                    articles: [],
+                });
+            }
+            const item = grouped.get(key);
+            item.count += 1;
+            item.in_pool = item.in_pool || byCode.has(parsed.code) || byName.has(parsed.name);
+            item.articles.push({
+                article_id: record.article_id,
+                title: record.title,
+                author: record.author || record.account,
+                account: record.account,
+                publish_time: record.publish_time,
+            });
+        }
+    }
+
+    return [...grouped.values()];
+}
+
+async function runStockCatalogUpdate() {
+    try {
+        const pythonBin = process.env.STOCK_CATALOG_PYTHON || (fs.existsSync(STOCK_CATALOG_VENV_PYTHON) ? STOCK_CATALOG_VENV_PYTHON : "python3");
+        const { stdout } = await execFileAsync(pythonBin, [
+            STOCK_CATALOG_UPDATE_SCRIPT,
+            "--data-dir",
+            STOCK_TRACKING_DIR,
+        ], {
+            cwd: PROJECT_ROOT,
+            maxBuffer: 10 * 1024 * 1024,
+        });
+        const jsonLine = String(stdout || "").split(/\r?\n/).reverse().find((line) => line.trim().startsWith("{"));
+        return jsonLine ? JSON.parse(jsonLine) : {};
+    } catch (error) {
+        const stderr = String(error.stderr || error.message || "");
+        if (stderr.includes("No module named") && stderr.includes("akshare")) {
+            throw new Error("未检测到 akshare，请先运行：pip install akshare");
+        }
+        throw new Error(stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" / ") || "股票目录更新失败");
+    }
+}
+
 async function analyzeStoredArticle(articleId) {
     const record = loadArticleIndex(DEFAULT_OUTPUT_DIR).find((item) => item.article_id === articleId);
     if (!record) {
@@ -272,6 +372,40 @@ async function analyzeStoredArticle(articleId) {
 }
 
 async function handleApi(req, res, url) {
+    if (req.method === "GET" && url.pathname === "/api/stocks/catalog/status") {
+        return sendJson(res, 200, getStockCatalogStatus(STOCK_TRACKING_DIR));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/stocks/catalog/update") {
+        try {
+            const result = await runStockCatalogUpdate();
+            return sendJson(res, 200, {
+                ...result,
+                status: getStockCatalogStatus(STOCK_TRACKING_DIR),
+            });
+        } catch (error) {
+            return sendJson(res, 500, { error: error.message || "股票目录更新失败" });
+        }
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/stocks/search") {
+        const query = url.searchParams.get("q") || "";
+        return sendJson(res, 200, {
+            query,
+            items: searchStockCatalog(STOCK_TRACKING_DIR, query, { limit: Number(url.searchParams.get("limit") || 20) }),
+            status: getStockCatalogStatus(STOCK_TRACKING_DIR),
+        });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/stocks/review-queue") {
+        const stocks = readStocks(STOCK_TRACKING_DIR);
+        const prices = readDailyPrices(STOCK_TRACKING_DIR);
+        const mentions = buildArticleStockMentions(loadIndex(), stocks);
+        return sendJson(res, 200, {
+            items: buildReviewQueue(stocks, prices, mentions),
+        });
+    }
+
     if (req.method === "GET" && url.pathname === "/api/stocks") {
         return sendJson(res, 200, loadStockDashboard(STOCK_TRACKING_DIR, {
             range: url.searchParams.get("range") || "day",
@@ -292,6 +426,31 @@ async function handleApi(req, res, url) {
 
     if (url.pathname.startsWith("/api/stocks/")) {
         const stockId = decodeURIComponent(url.pathname.replace("/api/stocks/", "")).toUpperCase();
+
+        if (stockId.endsWith("/NOTE")) {
+            const cleanStockId = stockId.slice(0, -"/NOTE".length);
+            const detail = loadStockDetail(STOCK_TRACKING_DIR, cleanStockId);
+            if (!detail) return sendJson(res, 404, { error: "股票不存在" });
+
+            if (req.method === "GET") {
+                return sendJson(res, 200, {
+                    stock_id: cleanStockId,
+                    ...readStockNote(STOCK_TRACKING_DIR, detail.stock),
+                });
+            }
+
+            if (req.method === "PUT") {
+                try {
+                    const body = await readJsonBody(req);
+                    return sendJson(res, 200, {
+                        stock_id: cleanStockId,
+                        ...writeStockNote(STOCK_TRACKING_DIR, detail.stock, body.content),
+                    });
+                } catch (error) {
+                    return sendJson(res, 400, { error: error.message || "保存股票笔记失败" });
+                }
+            }
+        }
 
         if (req.method === "GET") {
             const detail = loadStockDetail(STOCK_TRACKING_DIR, stockId);

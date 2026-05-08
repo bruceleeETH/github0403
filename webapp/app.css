@@ -373,6 +373,18 @@ select.text-input {
     gap: 10px;
 }
 
+.stock-form-head-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.stock-query-field {
+    grid-column: span 2;
+}
+
 .stock-reason-field {
     grid-column: 1 / -1;
 }
@@ -386,6 +398,62 @@ select.text-input {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.stock-candidate-list {
+    display: grid;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.stock-candidate-row,
+.stock-candidate-selected {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    color: var(--ink);
+    padding: 8px 10px;
+    text-align: left;
+}
+
+.stock-candidate-row:hover,
+.stock-candidate-row:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.stock-candidate-row span,
+.stock-candidate-selected {
+    min-width: 0;
+}
+
+.stock-candidate-row strong,
+.stock-candidate-selected strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+.stock-candidate-row small,
+.stock-candidate-selected span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.stock-candidate-row em {
+    color: var(--accent-dark);
+    font-size: 12px;
+    font-style: normal;
+    font-weight: 800;
+    white-space: nowrap;
 }
 
 .stock-toolbar {
@@ -709,6 +777,65 @@ select.text-input {
     font-variant-numeric: tabular-nums;
     text-align: right;
     font-weight: 800;
+}
+
+.stock-rank-pct {
+    display: grid;
+    gap: 3px;
+}
+
+.stock-rank-pct small {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+}
+
+.stock-review-list {
+    display: grid;
+    gap: 8px;
+}
+
+.review-row {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    color: var(--ink);
+    padding: 10px;
+    text-align: left;
+}
+
+.review-row:hover,
+.review-row:focus-visible {
+    border-color: var(--accent);
+    outline: none;
+}
+
+.review-main {
+    display: grid;
+    gap: 3px;
+    min-width: 0;
+}
+
+.review-main strong,
+.review-main span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.review-main span,
+.review-action {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.review-action {
+    white-space: nowrap;
 }
 
 [data-tone="up"] {
@@ -1298,6 +1425,21 @@ select.text-input {
     line-height: 1.5;
 }
 
+.article-stock-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.article-stock-actions .primary-btn,
+.article-stock-actions .secondary-btn {
+    min-height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+}
+
 .stock-status-tag[data-status="archived"] {
     background: #f6eddf;
     color: var(--warning);
@@ -1474,12 +1616,24 @@ select.text-input {
         grid-template-columns: 1fr;
     }
 
+    .stock-query-field {
+        grid-column: 1;
+    }
+
     .stock-rank-row {
         grid-template-columns: 30px minmax(0, 1fr) 70px;
     }
 
     .stock-rank-tags,
     .stock-rank-price {
+        display: none;
+    }
+
+    .review-row {
+        grid-template-columns: 58px minmax(0, 1fr);
+    }
+
+    .review-action {
         display: none;
     }
 }
