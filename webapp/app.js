@@ -12,12 +12,18 @@ import {
 } from "./research-utils.mjs";
 
 const state = {
+  activeView: "articles",
   articles: [],
   authors: [],
+  stockDashboard: { stocks: [], rankings: [], summary: {} },
   queue: [],
   queueOverLimit: false,
   selectedAuthor: "",
   selectedArticleId: "",
+  selectedStockId: "",
+  stockRange: "day",
+  stockOrder: "desc",
+  editingStockId: "",
   workspaceMode: "list",
   readerDetail: null,
   articleListScrollTop: 0,
@@ -26,11 +32,37 @@ const state = {
 };
 
 const els = {
+  articleModeBtn: document.querySelector("#article-mode-btn"),
+  stockModeBtn: document.querySelector("#stock-mode-btn"),
+  articleSideContent: document.querySelector("#article-side-content"),
+  stockSideContent: document.querySelector("#stock-side-content"),
+  articleWorkspace: document.querySelector("#article-workspace"),
+  stockWorkspace: document.querySelector("#stock-workspace"),
   authorSearch: document.querySelector("#author-search"),
   allAuthorsBtn: document.querySelector("#all-authors-btn"),
   totalArticleCount: document.querySelector("#total-article-count"),
   authorCount: document.querySelector("#author-count"),
   authors: document.querySelector("#authors"),
+  stockSearch: document.querySelector("#stock-search"),
+  allStocksBtn: document.querySelector("#all-stocks-btn"),
+  stockTotalCount: document.querySelector("#stock-total-count"),
+  stockSideCount: document.querySelector("#stock-side-count"),
+  stockSideList: document.querySelector("#stock-side-list"),
+  stockForm: document.querySelector("#stock-form"),
+  stockFormTitle: document.querySelector("#stock-form-title"),
+  stockFormStatus: document.querySelector("#stock-form-status"),
+  stockCode: document.querySelector("#stock-code"),
+  stockName: document.querySelector("#stock-name"),
+  stockExchange: document.querySelector("#stock-exchange"),
+  stockTags: document.querySelector("#stock-tags"),
+  stockReason: document.querySelector("#stock-reason"),
+  saveStockBtn: document.querySelector("#save-stock-btn"),
+  cancelStockEditBtn: document.querySelector("#cancel-stock-edit-btn"),
+  stockRankNote: document.querySelector("#stock-rank-note"),
+  stockCount: document.querySelector("#stock-count"),
+  stockRangeTabs: document.querySelectorAll("[data-stock-range]"),
+  stockSortToggle: document.querySelector("#stock-sort-toggle"),
+  stockRankList: document.querySelector("#stock-rank-list"),
   batchLinks: document.querySelector("#batch-links"),
   linkCounter: document.querySelector("#link-counter"),
   parseLinksBtn: document.querySelector("#parse-links-btn"),
@@ -48,8 +80,10 @@ const els = {
   detailShrinkBtn: document.querySelector("#detail-shrink-btn"),
   detailGrowBtn: document.querySelector("#detail-grow-btn"),
   detailResetBtn: document.querySelector("#detail-reset-btn"),
+  detailTitle: document.querySelector("#detail-title"),
+  detailSubtitle: document.querySelector("#detail-subtitle"),
   shell: document.querySelector(".research-shell"),
-  rangeTabs: document.querySelectorAll(".range-tab"),
+  rangeTabs: document.querySelectorAll("[data-range]"),
 };
 
 const statusLabels = {
@@ -116,6 +150,53 @@ function indicatorLabels(items, limit = 6) {
     })
     .filter(Boolean)
     .slice(0, limit);
+}
+
+function formatStockDate(value) {
+  if (!value) return "暂无";
+  const text = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatPrice(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "--";
+}
+
+function formatPct(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "--";
+  return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
+function pctTone(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) return "flat";
+  return number > 0 ? "up" : "down";
+}
+
+function rangeLabel(value) {
+  return ({
+    day: "日",
+    "5d": "五日",
+    week: "周",
+  })[value] || value;
+}
+
+function stockTagsText(tags) {
+  return Array.isArray(tags) && tags.length ? tags.join("、") : "未设置标签";
+}
+
+function getStockSearchQuery() {
+  return els.stockSearch?.value.trim() || "";
 }
 
 function renderIndicatorItems(items, emptyText, type) {
@@ -211,6 +292,90 @@ function renderAuthors() {
   });
 }
 
+function getVisibleStockRankings() {
+  const query = getStockSearchQuery().toLowerCase();
+  return (state.stockDashboard.rankings || []).filter((item) => {
+    if (!query) return true;
+    const stock = item.stock || {};
+    const haystack = `${stock.stock_id || ""} ${stock.code || ""} ${stock.name || ""} ${(stock.tags || []).join(" ")}`.toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function renderStockSideList() {
+  const rankings = getVisibleStockRankings();
+  const activeCount = state.stockDashboard.summary?.active_count || 0;
+  els.stockTotalCount.textContent = String(activeCount);
+  els.stockSideCount.textContent = `${rankings.length} 只`;
+  els.allStocksBtn.classList.toggle("active", state.selectedStockId === "");
+
+  if (rankings.length === 0) {
+    els.stockSideList.innerHTML = `<div class="empty-state compact">暂无匹配股票。</div>`;
+    return;
+  }
+
+  els.stockSideList.innerHTML = rankings.map((item) => {
+    const stock = item.stock || {};
+    const active = state.selectedStockId === stock.stock_id;
+    return `
+      <button class="author-row stock-side-row${active ? " active" : ""}" type="button" data-stock-id="${escapeHtml(stock.stock_id)}">
+        <span class="author-row-main">
+          <strong>${escapeHtml(stock.name || stock.code)}</strong>
+          <span>${escapeHtml(stock.stock_id || "")}</span>
+        </span>
+        <span class="author-row-meta">
+          <span>${escapeHtml(rangeLabel(state.stockRange))} ${escapeHtml(formatPct(item.pct_change))}</span>
+          <span>${escapeHtml(formatPrice(item.latest_price))}</span>
+        </span>
+        <span class="keyword-strip">${escapeHtml(stockTagsText(stock.tags))}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.stockSideList.querySelectorAll("[data-stock-id]").forEach((button) => {
+    button.addEventListener("click", () => selectStock(button.dataset.stockId));
+  });
+}
+
+function renderStockRankings() {
+  const rankings = getVisibleStockRankings();
+  const latestDate = state.stockDashboard.latest_trade_date || "暂无交易日";
+  els.stockCount.textContent = `${rankings.length} 只`;
+  els.stockRankNote.textContent = `${rangeLabel(state.stockRange)}表现 · 最新交易日 ${latestDate}`;
+  els.stockSortToggle.textContent = state.stockOrder === "desc" ? "降序" : "升序";
+
+  if (rankings.length === 0) {
+    els.stockRankList.innerHTML = `<div class="empty-state">股票池为空，先添加一只股票。</div>`;
+    return;
+  }
+
+  els.stockRankList.innerHTML = rankings.map((item) => {
+    const stock = item.stock || {};
+    const active = state.selectedStockId === stock.stock_id;
+    return `
+      <button class="stock-rank-row${active ? " active" : ""}" type="button" data-stock-id="${escapeHtml(stock.stock_id)}">
+        <span class="stock-rank-no">${item.rank}</span>
+        <span class="stock-rank-main">
+          <strong>${escapeHtml(stock.name || stock.code)}</strong>
+          <span>${escapeHtml(stock.stock_id || "")} · 加入 ${escapeHtml(formatStockDate(stock.added_at))}</span>
+        </span>
+        <span class="stock-rank-tags">${escapeHtml(stockTagsText(stock.tags))}</span>
+        <span class="stock-rank-price">${escapeHtml(formatPrice(item.latest_price))}</span>
+        <span class="stock-rank-pct" data-tone="${pctTone(item.pct_change)}">${escapeHtml(formatPct(item.pct_change))}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.stockRankList.querySelectorAll("[data-stock-id]").forEach((button) => {
+    button.addEventListener("click", () => selectStock(button.dataset.stockId));
+  });
+}
+
+function renderStocks() {
+  renderStockSideList();
+  renderStockRankings();
+}
+
 function renderArticles() {
   const articles = getFilteredArticles();
   els.articleCount.textContent = `${articles.length} 篇`;
@@ -262,6 +427,21 @@ function renderArticles() {
 }
 
 function renderWorkspace() {
+  const showingStocks = state.activeView === "stocks";
+  els.articleSideContent.hidden = showingStocks;
+  els.stockSideContent.hidden = !showingStocks;
+  els.articleWorkspace.hidden = showingStocks;
+  els.stockWorkspace.hidden = !showingStocks;
+  els.articleModeBtn.classList.toggle("active", !showingStocks);
+  els.stockModeBtn.classList.toggle("active", showingStocks);
+  els.articleModeBtn.setAttribute("aria-selected", showingStocks ? "false" : "true");
+  els.stockModeBtn.setAttribute("aria-selected", showingStocks ? "true" : "false");
+
+  if (showingStocks) {
+    renderStocks();
+    return;
+  }
+
   if (state.workspaceMode === "reader" && state.readerDetail) {
     renderArticleReader(state.readerDetail);
     return;
@@ -333,6 +513,11 @@ function renderEmptyDetail(message) {
   els.detail.innerHTML = `<div class="detail-empty">${escapeHtml(message)}</div>`;
 }
 
+function setDetailHeading(title, subtitle) {
+  els.detailTitle.textContent = title;
+  els.detailSubtitle.textContent = subtitle;
+}
+
 function renderDetailFiles(detail, meta, includeMarkdown = true) {
   return `
     <section class="detail-section">
@@ -393,6 +578,7 @@ function renderPersonalNoteSection(detail, meta) {
 }
 
 function renderDetail(detail) {
+  setDetailHeading("文章详情", "摘要、观点和本地文件入口");
   const meta = detail.meta || {};
   const analysis = detail.analysis || {};
   const analyzed = hasModelAnalysis(analysis);
@@ -885,10 +1071,179 @@ async function analyzeArticleNow(articleId) {
   }
 }
 
+function renderStockDetail(detail) {
+  const stock = detail.stock || {};
+  const perf = detail.performance || {};
+  const related = detail.related_articles || [];
+  const prices = detail.prices || [];
+  setDetailHeading("股票详情", "价格快照、关注理由和关联文章");
+
+  const metric = (label, item) => `
+    <div class="metric-item">
+      <span>${escapeHtml(label)}</span>
+      <strong data-tone="${pctTone(item?.pct_change)}">${escapeHtml(formatPct(item?.pct_change))}</strong>
+      <p>${escapeHtml(item?.reference_trade_date || "--")} → ${escapeHtml(item?.latest_trade_date || "--")}</p>
+    </div>
+  `;
+
+  els.detail.innerHTML = `
+    <article class="detail-content stock-detail-content">
+      <header class="detail-title-block stock-detail-title">
+        <span class="sentiment-tag stock-status-tag" data-status="${escapeHtml(stock.status || "active")}">${stock.status === "archived" ? "已归档" : "关注中"}</span>
+        <h3>${escapeHtml(stock.name || stock.code || "未命名股票")}</h3>
+        <p>${escapeHtml(stock.stock_id || "")} · 加入 ${escapeHtml(formatStockDate(stock.added_at))}</p>
+      </header>
+
+      <section class="detail-section">
+        <h4>表现概览</h4>
+        <div class="metric-grid">
+          ${metric("日表现", perf.day)}
+          ${metric("五日表现", perf.five_day)}
+          ${metric("周表现", perf.week)}
+          <div class="metric-item">
+            <span>最新收盘价</span>
+            <strong>${escapeHtml(formatPrice(perf.day?.latest_price))}</strong>
+            <p>${escapeHtml(perf.day?.latest_trade_date || "暂无交易日")}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>标签</h4>
+        <div class="pill-row">
+          ${(stock.tags || []).length ? stock.tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("") : "<span class=\"muted-text\">未设置标签</span>"}
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>关注理由</h4>
+        <p>${escapeHtml(stock.watch_reason || "暂无关注理由")}</p>
+      </section>
+
+      <section class="detail-section">
+        <h4>价格快照</h4>
+        <div class="price-table">
+          ${prices.slice(0, 10).map((price) => `
+            <div class="price-row">
+              <span>${escapeHtml(price.trade_date)}</span>
+              <strong>${escapeHtml(formatPrice(price.close))}</strong>
+              <span data-tone="${pctTone(price.pct_change)}">${escapeHtml(formatPct(price.pct_change))}</span>
+            </div>
+          `).join("") || "<p class=\"muted-text\">暂无价格快照</p>"}
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>关联文章</h4>
+        <div class="related-article-list">
+          ${related.length ? related.map((article) => `
+            <button class="related-article-item" type="button" data-article-id="${escapeHtml(article.article_id)}">
+              <strong>${escapeHtml(article.title || "未命名文章")}</strong>
+              <span>${escapeHtml(article.author || article.account || "未知作者")} · ${escapeHtml(article.publish_time || "")}</span>
+            </button>
+          `).join("") : "<p class=\"muted-text\">暂未从文章分析中匹配到这只股票。</p>"}
+        </div>
+      </section>
+
+      <section class="detail-section stock-detail-actions">
+        <button type="button" class="secondary-btn" id="edit-stock-btn">编辑股票</button>
+        <button type="button" class="secondary-btn danger-btn" id="archive-stock-btn">删除/归档</button>
+      </section>
+    </article>
+  `;
+
+  els.detail.querySelector("#edit-stock-btn")?.addEventListener("click", () => startEditStock(stock));
+  els.detail.querySelector("#archive-stock-btn")?.addEventListener("click", () => archiveSelectedStock(stock.stock_id));
+  els.detail.querySelectorAll("[data-article-id]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      setViewMode("articles");
+      await selectArticle(button.dataset.articleId);
+    });
+  });
+}
+
+function resetStockForm() {
+  state.editingStockId = "";
+  els.stockForm.reset();
+  els.stockCode.disabled = false;
+  els.stockFormTitle.textContent = "添加股票";
+  els.saveStockBtn.textContent = "添加股票";
+  els.cancelStockEditBtn.hidden = true;
+  els.stockFormStatus.textContent = "";
+  els.stockFormStatus.dataset.tone = "";
+}
+
+function startEditStock(stock) {
+  state.editingStockId = stock.stock_id || "";
+  els.stockFormTitle.textContent = "编辑股票";
+  els.saveStockBtn.textContent = "保存修改";
+  els.cancelStockEditBtn.hidden = false;
+  els.stockCode.value = stock.stock_id || stock.code || "";
+  els.stockCode.disabled = true;
+  els.stockName.value = stock.name || "";
+  els.stockExchange.value = stock.exchange || "";
+  els.stockTags.value = (stock.tags || []).join("、");
+  els.stockReason.value = stock.watch_reason || "";
+  els.stockFormStatus.textContent = "正在编辑当前股票";
+  els.stockFormStatus.dataset.tone = "";
+  els.stockForm.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+async function submitStockForm(event) {
+  event.preventDefault();
+  const payload = {
+    code: els.stockCode.value,
+    exchange: els.stockExchange.value,
+    name: els.stockName.value,
+    tags: els.stockTags.value,
+    watch_reason: els.stockReason.value,
+  };
+  const isEdit = Boolean(state.editingStockId);
+  els.saveStockBtn.disabled = true;
+  els.stockFormStatus.textContent = isEdit ? "正在保存修改..." : "正在添加股票...";
+  els.stockFormStatus.dataset.tone = "";
+
+  try {
+    const result = await fetchJson(isEdit
+      ? `/api/stocks/${encodeURIComponent(state.editingStockId)}`
+      : "/api/stocks", {
+      method: isEdit ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    resetStockForm();
+    await refreshStocks();
+    const stockId = result.stock?.stock_id;
+    if (stockId) await selectStock(stockId);
+    els.stockFormStatus.textContent = isEdit ? "修改已保存" : "股票已加入关注池";
+    els.stockFormStatus.dataset.tone = "success";
+  } catch (error) {
+    els.stockFormStatus.textContent = error.message || "保存失败";
+    els.stockFormStatus.dataset.tone = "danger";
+  } finally {
+    els.saveStockBtn.disabled = false;
+  }
+}
+
+async function archiveSelectedStock(stockId) {
+  if (!stockId) return;
+  const confirmed = window.confirm("确认将这只股票从关注池归档？历史价格会保留。");
+  if (!confirmed) return;
+  try {
+    await fetchJson(`/api/stocks/${encodeURIComponent(stockId)}`, { method: "DELETE" });
+    state.selectedStockId = "";
+    await refreshStocks();
+    renderEmptyDetail("股票已归档。");
+  } catch (error) {
+    renderEmptyDetail(`归档失败：${error.message}`);
+  }
+}
+
 function renderAll() {
   renderAuthors();
   renderWorkspace();
   renderQueue();
+  renderStocks();
 }
 
 function applyDetailLayoutConfig() {
@@ -1001,8 +1356,38 @@ function setupDetailResizer() {
   els.detailResetBtn.addEventListener("click", resetDetailPaneWidth);
 }
 
+async function setViewMode(viewMode) {
+  state.activeView = viewMode === "stocks" ? "stocks" : "articles";
+  if (state.activeView === "stocks") {
+    state.workspaceMode = "list";
+    state.readerDetail = null;
+    setDetailHeading("股票详情", "价格快照、关注理由和关联文章");
+    renderWorkspace();
+    if (!state.stockDashboard.rankings.length) await refreshStocks();
+    const selectedStillVisible = state.stockDashboard.rankings.some((item) => item.stock?.stock_id === state.selectedStockId);
+    if (state.selectedStockId && selectedStillVisible) {
+      await selectStock(state.selectedStockId);
+    } else {
+      const first = getVisibleStockRankings()[0];
+      if (first?.stock?.stock_id) await selectStock(first.stock.stock_id);
+      else renderEmptyDetail("添加股票后，这里会显示价格、表现和关联文章。");
+    }
+    return;
+  }
+
+  setDetailHeading("文章详情", "摘要、观点和本地文件入口");
+  renderWorkspace();
+  if (state.selectedArticleId) await selectArticle(state.selectedArticleId);
+  else {
+    const first = getFilteredArticles()[0];
+    if (first) await selectArticle(first.article_id);
+    else renderEmptyDetail("粘贴链接开始抓取，或从每日文章中选择一篇查看。");
+  }
+}
+
 async function selectArticle(articleId) {
   if (!articleId) return;
+  state.activeView = "articles";
   state.selectedArticleId = articleId;
   renderArticles();
   els.detail.innerHTML = `<div class="detail-empty">正在加载文章详情...</div>`;
@@ -1014,8 +1399,31 @@ async function selectArticle(articleId) {
   }
 }
 
+async function refreshStocks() {
+  const query = getStockSearchQuery();
+  const data = await fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(query)}`);
+  state.stockDashboard = data;
+  renderStocks();
+}
+
+async function selectStock(stockId) {
+  if (!stockId) return;
+  state.activeView = "stocks";
+  state.selectedStockId = stockId;
+  renderWorkspace();
+  els.detail.innerHTML = `<div class="detail-empty">正在加载股票详情...</div>`;
+  try {
+    const detail = await fetchJson(`/api/stocks/${encodeURIComponent(stockId)}`);
+    renderStockDetail(detail);
+    renderStocks();
+  } catch (error) {
+    renderEmptyDetail(`加载失败：${error.message}`);
+  }
+}
+
 async function openArticleReader(articleId) {
   if (!articleId) return;
+  state.activeView = "articles";
   state.articleListScrollTop = els.workspacePane?.scrollTop || 0;
   state.selectedArticleId = articleId;
   renderArticles();
@@ -1045,13 +1453,23 @@ function closeArticleReader() {
 }
 
 async function refreshAll() {
-  const [{ articles }, { authors }] = await Promise.all([
+  const [{ articles }, { authors }, stockDashboard] = await Promise.all([
     fetchJson("/api/articles"),
     fetchJson("/api/authors"),
+    fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(getStockSearchQuery())}`),
   ]);
   state.articles = articles;
   state.authors = authors;
+  state.stockDashboard = stockDashboard;
   renderAll();
+
+  if (state.activeView === "stocks") {
+    if (!state.selectedStockId) {
+      const first = getVisibleStockRankings()[0];
+      if (first?.stock?.stock_id) await selectStock(first.stock.stock_id);
+    }
+    return;
+  }
 
   if (!state.selectedArticleId) {
     const first = getFilteredArticles()[0];
@@ -1122,7 +1540,45 @@ async function runFetchQueue() {
 
 els.authorSearch.addEventListener("input", renderAuthors);
 
+els.articleModeBtn.addEventListener("click", () => setViewMode("articles"));
+els.stockModeBtn.addEventListener("click", () => setViewMode("stocks"));
+
+els.stockSearch.addEventListener("input", async () => {
+  try {
+    await refreshStocks();
+  } catch (error) {
+    renderEmptyDetail(`股票筛选失败：${error.message}`);
+  }
+});
+
+els.allStocksBtn.addEventListener("click", async () => {
+  state.selectedStockId = "";
+  els.stockSearch.value = "";
+  await refreshStocks();
+  const first = getVisibleStockRankings()[0];
+  if (first?.stock?.stock_id) selectStock(first.stock.stock_id);
+  else renderEmptyDetail("股票池为空，先添加一只股票。");
+});
+
+els.stockForm.addEventListener("submit", submitStockForm);
+els.cancelStockEditBtn.addEventListener("click", resetStockForm);
+
+els.stockRangeTabs.forEach((button) => {
+  button.addEventListener("click", async () => {
+    state.stockRange = button.dataset.stockRange || "day";
+    els.stockRangeTabs.forEach((tab) => tab.classList.toggle("active", tab === button));
+    await refreshStocks();
+    if (state.selectedStockId) await selectStock(state.selectedStockId);
+  });
+});
+
+els.stockSortToggle.addEventListener("click", async () => {
+  state.stockOrder = state.stockOrder === "desc" ? "asc" : "desc";
+  await refreshStocks();
+});
+
 els.allAuthorsBtn.addEventListener("click", () => {
+  state.activeView = "articles";
   state.selectedAuthor = "";
   state.selectedArticleId = "";
   state.workspaceMode = "list";
@@ -1144,6 +1600,7 @@ els.startFetchBtn.addEventListener("click", runFetchQueue);
 
 els.rangeTabs.forEach((button) => {
   button.addEventListener("click", () => {
+    state.activeView = "articles";
     state.dateRange = button.dataset.range || "all";
     els.rangeTabs.forEach((tab) => tab.classList.toggle("active", tab === button));
     state.selectedArticleId = "";

@@ -3,12 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import http from "node:http";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME } from "../src/config/constants.mjs";
+import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME, STOCK_TRACKING_DIR } from "../src/config/constants.mjs";
 import { analyzeArticle, isModelAnalysis, sanitizeModelAnalysis } from "../src/core/analyze-article.mjs";
 import { captureArticleToLocal } from "../src/core/capture-article.mjs";
 import { buildMarkdown } from "../src/core/export-article.mjs";
 import { listAccountArticles } from "../src/core/list-account-articles.mjs";
 import { readPersonalNote, writePersonalNote } from "../src/core/personal-note.mjs";
+import { addStock, archiveStock, loadStockDashboard, loadStockDetail, updateStock } from "../src/core/stock-tracker.mjs";
 import { cleanAuthorName, loadArticleIndex, upsertIndexRecord } from "../src/storage/article-index.mjs";
 import { buildIndexRecord } from "../src/storage/file-layout.mjs";
 import { encodeLibraryPath, safeJoin } from "../src/storage/paths.mjs";
@@ -210,6 +211,31 @@ function buildShareableHtml(articleId) {
     return { html, title: record.title || "article" };
 }
 
+function findRelatedArticlesForStock(stock, limit = 20) {
+    const code = String(stock.code || "").trim();
+    const name = String(stock.name || "").trim();
+    if (!code && !name) return [];
+
+    return loadIndex()
+        .filter((record) => {
+            const stocks = Array.isArray(record.stocks) ? record.stocks : [];
+            return stocks.some((item) => {
+                const label = String(item || "");
+                return (name && label.includes(name)) || (code && label.includes(code));
+            });
+        })
+        .slice(0, limit)
+        .map((record) => ({
+            article_id: record.article_id,
+            title: record.title,
+            author: record.author || record.account,
+            account: record.account,
+            publish_time: record.publish_time,
+            source_url: record.source_url,
+            stocks: record.stocks || [],
+        }));
+}
+
 async function analyzeStoredArticle(articleId) {
     const record = loadArticleIndex(DEFAULT_OUTPUT_DIR).find((item) => item.article_id === articleId);
     if (!record) {
@@ -246,6 +272,56 @@ async function analyzeStoredArticle(articleId) {
 }
 
 async function handleApi(req, res, url) {
+    if (req.method === "GET" && url.pathname === "/api/stocks") {
+        return sendJson(res, 200, loadStockDashboard(STOCK_TRACKING_DIR, {
+            range: url.searchParams.get("range") || "day",
+            order: url.searchParams.get("order") || "desc",
+            query: url.searchParams.get("q") || "",
+        }));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/stocks") {
+        try {
+            const body = await readJsonBody(req);
+            const stock = addStock(STOCK_TRACKING_DIR, body);
+            return sendJson(res, 201, { stock });
+        } catch (error) {
+            return sendJson(res, 400, { error: error.message || "添加股票失败" });
+        }
+    }
+
+    if (url.pathname.startsWith("/api/stocks/")) {
+        const stockId = decodeURIComponent(url.pathname.replace("/api/stocks/", "")).toUpperCase();
+
+        if (req.method === "GET") {
+            const detail = loadStockDetail(STOCK_TRACKING_DIR, stockId);
+            if (!detail) return sendJson(res, 404, { error: "股票不存在" });
+            return sendJson(res, 200, {
+                ...detail,
+                related_articles: findRelatedArticlesForStock(detail.stock),
+            });
+        }
+
+        if (req.method === "PUT") {
+            try {
+                const body = await readJsonBody(req);
+                const stock = updateStock(STOCK_TRACKING_DIR, stockId, body);
+                return sendJson(res, 200, { stock });
+            } catch (error) {
+                return sendJson(res, 400, { error: error.message || "更新股票失败" });
+            }
+        }
+
+        if (req.method === "DELETE") {
+            try {
+                const stock = archiveStock(STOCK_TRACKING_DIR, stockId);
+                return sendJson(res, 200, { stock });
+            } catch (error) {
+                return sendJson(res, 400, { error: error.message || "删除股票失败" });
+            }
+        }
+    }
+
     if (req.method === "GET" && url.pathname === "/api/articles") {
         return sendJson(res, 200, { articles: loadIndex() });
     }
@@ -427,6 +503,7 @@ export function startServer() {
     server.listen(PORT, HOST, () => {
         console.log(`本地网页已启动: http://${HOST}:${PORT}`);
         console.log(`文章数据目录: ${DEFAULT_OUTPUT_DIR}`);
+        console.log(`股票追踪目录: ${STOCK_TRACKING_DIR}`);
     });
 }
 

@@ -16,67 +16,166 @@
                 <p class="eyebrow">Research Console</p>
                 <h1>财经博主研究台</h1>
                 <p class="subtle">批量保存公众号文章，按作者沉淀每日观点。</p>
+                <div class="app-switch" role="tablist" aria-label="研究模式">
+                    <button id="article-mode-btn" class="app-switch-btn active" type="button" data-view="articles"
+                        role="tab" aria-selected="true">文章研究</button>
+                    <button id="stock-mode-btn" class="app-switch-btn" type="button" data-view="stocks" role="tab"
+                        aria-selected="false">股票追踪</button>
+                </div>
             </header>
 
-            <div class="side-controls">
-                <label class="field-label" for="author-search">搜索博主</label>
-                <input id="author-search" class="text-input" type="search" placeholder="作者或公众号" autocomplete="off" />
-                <button id="all-authors-btn" class="author-filter active" type="button">
-                    <span>全部博主</span>
-                    <strong id="total-article-count">0</strong>
-                </button>
+            <div id="article-side-content">
+                <div class="side-controls">
+                    <label class="field-label" for="author-search">搜索博主</label>
+                    <input id="author-search" class="text-input" type="search" placeholder="作者或公众号" autocomplete="off" />
+                    <button id="all-authors-btn" class="author-filter active" type="button">
+                        <span>全部博主</span>
+                        <strong id="total-article-count">0</strong>
+                    </button>
+                </div>
+
+                <div class="pane-title-row">
+                    <h2>博主列表</h2>
+                    <span id="author-count" class="count-label">0 位</span>
+                </div>
+                <div id="authors" class="author-list" aria-live="polite"></div>
             </div>
 
-            <div class="pane-title-row">
-                <h2>博主列表</h2>
-                <span id="author-count" class="count-label">0 位</span>
+            <div id="stock-side-content" hidden>
+                <div class="side-controls">
+                    <label class="field-label" for="stock-search">搜索股票</label>
+                    <input id="stock-search" class="text-input" type="search" placeholder="代码、名称或标签"
+                        autocomplete="off" />
+                    <button id="all-stocks-btn" class="author-filter active" type="button">
+                        <span>股票池</span>
+                        <strong id="stock-total-count">0</strong>
+                    </button>
+                </div>
+
+                <div class="pane-title-row">
+                    <h2>关注股票</h2>
+                    <span id="stock-side-count" class="count-label">0 只</span>
+                </div>
+                <div id="stock-side-list" class="author-list stock-side-list" aria-live="polite"></div>
             </div>
-            <div id="authors" class="author-list" aria-live="polite"></div>
         </aside>
 
         <main class="workspace-pane" aria-label="批量抓取和每日文章">
-            <section class="ingest-panel" aria-labelledby="batch-title">
-                <div class="pane-title-row">
-                    <div>
-                        <h2 id="batch-title">批量抓取</h2>
-                        <p class="section-note">每行一个微信公众号文章链接，一次最多 20 个。</p>
+            <div id="article-workspace">
+                <section class="ingest-panel" aria-labelledby="batch-title">
+                    <div class="pane-title-row">
+                        <div>
+                            <h2 id="batch-title">批量抓取</h2>
+                            <p class="section-note">每行一个微信公众号文章链接，一次最多 20 个。</p>
+                        </div>
+                        <span id="link-counter" class="count-label">0 / 20</span>
                     </div>
-                    <span id="link-counter" class="count-label">0 / 20</span>
-                </div>
 
-                <label class="field-label" for="batch-links">文章链接</label>
-                <textarea id="batch-links" class="batch-input" rows="6" placeholder="https://mp.weixin.qq.com/s/..."
-                    spellcheck="false"></textarea>
+                    <label class="field-label" for="batch-links">文章链接</label>
+                    <textarea id="batch-links" class="batch-input" rows="6" placeholder="https://mp.weixin.qq.com/s/..."
+                        spellcheck="false"></textarea>
 
-                <div class="batch-actions">
-                    <button id="parse-links-btn" class="secondary-btn" type="button">解析链接</button>
-                    <button id="start-fetch-btn" class="primary-btn" type="button" disabled>开始抓取</button>
-                    <span id="batch-status" class="inline-status"></span>
-                </div>
-
-                <div id="queue-list" class="queue-list" aria-live="polite"></div>
-            </section>
-
-            <section class="article-panel" aria-labelledby="daily-title">
-                <div class="pane-title-row article-toolbar">
-                    <div>
-                        <h2 id="daily-title">每日文章</h2>
-                        <p id="active-filter" class="section-note">全部博主</p>
+                    <div class="batch-actions">
+                        <button id="parse-links-btn" class="secondary-btn" type="button">解析链接</button>
+                        <button id="start-fetch-btn" class="primary-btn" type="button" disabled>开始抓取</button>
+                        <span id="batch-status" class="inline-status"></span>
                     </div>
-                    <span id="article-count" class="count-label">0 篇</span>
-                </div>
 
-                <div class="range-tabs" role="tablist" aria-label="日期筛选">
-                    <button class="range-tab active" type="button" data-range="today">今天</button>
-                    <button class="range-tab" type="button" data-range="yesterday">昨天</button>
-                    <button class="range-tab" type="button" data-range="7d">近 7 天</button>
-                    <button class="range-tab" type="button" data-range="all">全部</button>
-                </div>
+                    <div id="queue-list" class="queue-list" aria-live="polite"></div>
+                </section>
 
-                <div id="articles" class="article-list" aria-live="polite"></div>
-            </section>
+                <section class="article-panel" aria-labelledby="daily-title">
+                    <div class="pane-title-row article-toolbar">
+                        <div>
+                            <h2 id="daily-title">每日文章</h2>
+                            <p id="active-filter" class="section-note">全部博主</p>
+                        </div>
+                        <span id="article-count" class="count-label">0 篇</span>
+                    </div>
 
-            <section id="reader-panel" class="reader-panel" aria-label="文章阅读" hidden></section>
+                    <div class="range-tabs" role="tablist" aria-label="日期筛选">
+                        <button class="range-tab active" type="button" data-range="today">今天</button>
+                        <button class="range-tab" type="button" data-range="yesterday">昨天</button>
+                        <button class="range-tab" type="button" data-range="7d">近 7 天</button>
+                        <button class="range-tab" type="button" data-range="all">全部</button>
+                    </div>
+
+                    <div id="articles" class="article-list" aria-live="polite"></div>
+                </section>
+
+                <section id="reader-panel" class="reader-panel" aria-label="文章阅读" hidden></section>
+            </div>
+
+            <div id="stock-workspace" hidden>
+                <section class="ingest-panel stock-form-panel" aria-labelledby="stock-form-title">
+                    <div class="pane-title-row">
+                        <div>
+                            <h2 id="stock-form-title">添加股票</h2>
+                            <p class="section-note">先用测试收盘价跑通追踪，后续可替换为真实行情接口。</p>
+                        </div>
+                        <span id="stock-form-status" class="inline-status"></span>
+                    </div>
+
+                    <form id="stock-form" class="stock-form">
+                        <label>
+                            <span class="field-label">代码</span>
+                            <input id="stock-code" class="text-input" type="text" placeholder="688981 或 SH.688981"
+                                autocomplete="off" required />
+                        </label>
+                        <label>
+                            <span class="field-label">名称</span>
+                            <input id="stock-name" class="text-input" type="text" placeholder="中芯国际" autocomplete="off"
+                                required />
+                        </label>
+                        <label>
+                            <span class="field-label">市场</span>
+                            <select id="stock-exchange" class="text-input">
+                                <option value="">自动识别</option>
+                                <option value="SH">沪市 SH</option>
+                                <option value="SZ">深市 SZ</option>
+                                <option value="BJ">北交所 BJ</option>
+                                <option value="HK">港股 HK</option>
+                                <option value="US">美股 US</option>
+                            </select>
+                        </label>
+                        <label>
+                            <span class="field-label">标签</span>
+                            <input id="stock-tags" class="text-input" type="text" placeholder="半导体、国产替代"
+                                autocomplete="off" />
+                        </label>
+                        <label class="stock-reason-field">
+                            <span class="field-label">关注理由</span>
+                            <textarea id="stock-reason" class="batch-input stock-reason-input" rows="3"
+                                placeholder="为什么加入观察池？"></textarea>
+                        </label>
+                        <div class="stock-form-actions">
+                            <button id="save-stock-btn" class="primary-btn" type="submit">添加股票</button>
+                            <button id="cancel-stock-edit-btn" class="secondary-btn" type="button" hidden>取消编辑</button>
+                        </div>
+                    </form>
+                </section>
+
+                <section class="article-panel stock-rank-panel" aria-labelledby="stock-rank-title">
+                    <div class="pane-title-row article-toolbar">
+                        <div>
+                            <h2 id="stock-rank-title">股票表现榜</h2>
+                            <p id="stock-rank-note" class="section-note">测试数据</p>
+                        </div>
+                        <span id="stock-count" class="count-label">0 只</span>
+                    </div>
+
+                    <div class="stock-toolbar">
+                        <div class="range-tabs stock-range-tabs" role="tablist" aria-label="股票周期">
+                            <button class="range-tab active" type="button" data-stock-range="day">日</button>
+                            <button class="range-tab" type="button" data-stock-range="5d">五日</button>
+                            <button class="range-tab" type="button" data-stock-range="week">周</button>
+                        </div>
+                        <button id="stock-sort-toggle" class="secondary-btn" type="button">降序</button>
+                    </div>
+
+                    <div id="stock-rank-list" class="stock-rank-list" aria-live="polite"></div>
+                </section>
+            </div>
         </main>
 
         <button id="detail-resizer" class="detail-resizer" type="button" aria-label="调整文章详情宽度"
@@ -85,8 +184,8 @@
         <aside class="detail-pane" aria-label="文章详情">
             <div class="pane-title-row detail-heading">
                 <div>
-                    <h2>文章详情</h2>
-                    <p class="section-note">摘要、观点和本地文件入口</p>
+                    <h2 id="detail-title">文章详情</h2>
+                    <p id="detail-subtitle" class="section-note">摘要、观点和本地文件入口</p>
                 </div>
                 <div class="detail-actions" aria-label="详情栏宽度控制">
                     <button id="detail-shrink-btn" class="icon-text-btn" type="button">收窄</button>

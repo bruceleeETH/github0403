@@ -16,6 +16,10 @@ export const DEFAULT_OUTPUT_DIR = process.env.WECHAT_ARTICLE_DATA_DIR
 
 export const INDEX_FILE_NAME = "articles.jsonl";
 
+export const STOCK_TRACKING_DIR = process.env.STOCK_TRACKING_DATA_DIR
+    ? path.resolve(process.env.STOCK_TRACKING_DATA_DIR)
+    : path.resolve(PROJECT_ROOT, "stock_tracking");
+
 export const STOP_WORDS = new Set([
     "今天",
     "这个",
@@ -49,4 +53,3 @@ export const STOP_WORDS = new Set([
 
 export const POSITIVE_HINTS = ["看多", "反弹", "乐观", "修复", "走强", "改善", "买入", "上涨", "机会"];
 export const NEGATIVE_HINTS = ["看空", "回避", "风险", "杀跌", "悲观", "下跌", "卖出", "担忧", "避险"];
-

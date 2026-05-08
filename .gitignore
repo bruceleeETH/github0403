@@ -8,6 +8,7 @@ src-tauri/gen/
 # 文章数据（本地抓取内容，不入库）
 wechat_articles/
 wechat_articles_puppeteer/
+stock_tracking/
 
 # 系统文件
 .DS_Store
