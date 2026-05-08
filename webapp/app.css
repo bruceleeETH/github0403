@@ -882,16 +882,188 @@ h4 {
     gap: 8px;
 }
 
+.personal-note-head-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
 .personal-note-head h4 {
     margin-bottom: 0;
 }
 
+.personal-note-mode {
+    display: inline-grid;
+    grid-template-columns: repeat(2, minmax(44px, 1fr));
+    gap: 2px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel-soft);
+    padding: 2px;
+}
+
+.personal-note-mode-btn {
+    min-height: 28px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    padding: 0 10px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.personal-note-mode-btn.active {
+    background: #fff;
+    color: var(--accent-dark);
+    box-shadow: 0 1px 4px rgba(26, 42, 36, 0.08);
+}
+
+.personal-note-mode-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.personal-note-preview,
 .personal-note-input {
     display: block;
     width: 100%;
     min-height: 300px;
-    max-height: 58vh;
     margin-top: 10px;
+}
+
+.personal-note-preview {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background:
+        linear-gradient(90deg, rgba(31, 122, 104, 0.08), transparent 38%) top left / 100% 3px no-repeat,
+        #fcfdfc;
+    padding: 16px 17px;
+    line-height: 1.78;
+    overflow-wrap: anywhere;
+}
+
+.personal-note-preview h1,
+.personal-note-preview h2,
+.personal-note-preview h3,
+.personal-note-preview h4 {
+    color: var(--ink);
+    margin: 18px 0 8px;
+    line-height: 1.35;
+}
+
+.personal-note-preview h1:first-child,
+.personal-note-preview h2:first-child,
+.personal-note-preview h3:first-child {
+    margin-top: 0;
+}
+
+.personal-note-preview h1 {
+    font-size: 20px;
+}
+
+.personal-note-preview h2 {
+    border-top: 1px solid var(--line);
+    padding-top: 14px;
+    font-size: 15px;
+}
+
+.personal-note-preview h3 {
+    font-size: 14px;
+}
+
+.personal-note-preview p {
+    margin: 0 0 10px;
+    color: var(--ink);
+}
+
+.personal-note-preview ul,
+.personal-note-preview ol {
+    margin: 8px 0 12px;
+    padding-left: 22px;
+}
+
+.personal-note-preview li {
+    margin: 5px 0;
+    color: var(--ink);
+}
+
+.personal-note-preview blockquote {
+    margin: 12px 0;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 10px 12px;
+    color: var(--accent-dark);
+}
+
+.personal-note-preview blockquote p:last-child {
+    margin-bottom: 0;
+}
+
+.personal-note-preview code {
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--panel-soft);
+    padding: 1px 5px;
+    font-family: "SFMono-Regular", Consolas, monospace;
+    font-size: 12px;
+}
+
+.personal-note-preview pre {
+    overflow: auto;
+    border-radius: 8px;
+    background: #0f1714;
+    color: #e7eee9;
+    padding: 12px;
+    line-height: 1.65;
+}
+
+.personal-note-preview pre code {
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 0;
+}
+
+.personal-note-meta {
+    margin-bottom: 14px;
+    border: 1px dashed var(--line-strong);
+    border-radius: 8px;
+    background: var(--panel-soft);
+}
+
+.personal-note-meta summary {
+    min-height: 34px;
+    padding: 0 10px;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.personal-note-meta pre {
+    margin: 0;
+    border-top: 1px dashed var(--line-strong);
+    border-radius: 0 0 8px 8px;
+    background: #fff;
+    color: var(--muted);
+}
+
+.note-task {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 7px;
+}
+
+.note-task input {
+    margin-top: 5px;
+    accent-color: var(--accent);
+}
+
+.personal-note-input {
+    max-height: 58vh;
     border: 1px solid var(--line-strong);
     border-radius: 8px;
     background: #fbfdfc;
@@ -913,6 +1085,11 @@ h4 {
 .personal-note-input:disabled {
     color: var(--muted);
     background: var(--panel-soft);
+}
+
+.personal-note-preview[hidden],
+.personal-note-input[hidden] {
+    display: none;
 }
 
 .personal-note-actions {

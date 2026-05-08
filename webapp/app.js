@@ -374,9 +374,16 @@ function renderPersonalNoteSection(detail, meta) {
     <section class="detail-section personal-note-section" data-article-id="${escapeHtml(articleId)}">
       <div class="personal-note-head">
         <h4>我的笔记</h4>
-        <span class="inline-status" id="personal-note-status">加载中...</span>
+        <div class="personal-note-head-actions">
+          <div class="personal-note-mode" role="tablist" aria-label="笔记视图">
+            <button type="button" class="personal-note-mode-btn active" data-note-mode="preview" role="tab" aria-selected="true">预览</button>
+            <button type="button" class="personal-note-mode-btn" data-note-mode="edit" role="tab" aria-selected="false">编辑</button>
+          </div>
+          <span class="inline-status" id="personal-note-status">加载中...</span>
+        </div>
       </div>
-      <textarea id="personal-note-input" class="personal-note-input" spellcheck="false" disabled></textarea>
+      <div id="personal-note-preview" class="personal-note-preview" aria-live="polite"></div>
+      <textarea id="personal-note-input" class="personal-note-input" spellcheck="false" disabled hidden></textarea>
       <div class="personal-note-actions">
         <button type="button" class="primary-btn" id="save-personal-note-btn" disabled>保存笔记</button>
         <span class="inline-status" id="personal-note-save-status"></span>
@@ -514,6 +521,158 @@ function formatNoteTimestamp(value) {
   });
 }
 
+function renderInlineMarkdown(text) {
+  let html = escapeHtml(text || "");
+  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  return html;
+}
+
+function renderMarkdownList(items, ordered = false) {
+  const tag = ordered ? "ol" : "ul";
+  return `<${tag}>${items.map((item) => `<li>${item}</li>`).join("")}</${tag}>`;
+}
+
+function renderPersonalNoteMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  const html = [];
+  let paragraph = [];
+  let listItems = [];
+  let orderedListItems = [];
+  let quoteLines = [];
+  let inCode = false;
+  let codeLines = [];
+  let inFrontmatter = false;
+  let frontmatterLines = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (listItems.length) {
+      html.push(renderMarkdownList(listItems));
+      listItems = [];
+    }
+    if (orderedListItems.length) {
+      html.push(renderMarkdownList(orderedListItems, true));
+      orderedListItems = [];
+    }
+  };
+  const flushQuote = () => {
+    if (!quoteLines.length) return;
+    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`);
+    quoteLines = [];
+  };
+  const flushCode = () => {
+    html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+    codeLines = [];
+  };
+  const flushBlocks = () => {
+    flushParagraph();
+    flushList();
+    flushQuote();
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
+    const line = rawLine.trim();
+
+    if (line === "---" && index === 0) {
+      inFrontmatter = true;
+      continue;
+    }
+    if (inFrontmatter) {
+      if (line === "---") {
+        inFrontmatter = false;
+        if (frontmatterLines.length) {
+          html.push(`
+            <details class="personal-note-meta">
+              <summary>元数据</summary>
+              <pre>${escapeHtml(frontmatterLines.join("\n"))}</pre>
+            </details>
+          `);
+          frontmatterLines = [];
+        }
+      } else {
+        frontmatterLines.push(rawLine);
+      }
+      continue;
+    }
+
+    if (line.startsWith("```")) {
+      if (inCode) {
+        flushCode();
+        inCode = false;
+      } else {
+        flushBlocks();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(rawLine);
+      continue;
+    }
+
+    if (!line) {
+      flushBlocks();
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+    if (heading) {
+      flushBlocks();
+      const level = heading[1].length;
+      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    if (line.startsWith(">")) {
+      flushParagraph();
+      flushList();
+      quoteLines.push(line.replace(/^>\s?/, ""));
+      continue;
+    }
+
+    const task = /^[-*]\s+\[( |x|X)\]\s+(.+)$/.exec(line);
+    if (task) {
+      flushParagraph();
+      flushQuote();
+      const checked = task[1].toLowerCase() === "x";
+      listItems.push(`<label class="note-task"><input type="checkbox" disabled${checked ? " checked" : ""}> <span>${renderInlineMarkdown(task[2])}</span></label>`);
+      continue;
+    }
+
+    const bullet = /^[-*]\s+(.+)$/.exec(line);
+    if (bullet) {
+      flushParagraph();
+      flushQuote();
+      listItems.push(renderInlineMarkdown(bullet[1]));
+      continue;
+    }
+
+    const ordered = /^\d+\.\s+(.+)$/.exec(line);
+    if (ordered) {
+      flushParagraph();
+      flushQuote();
+      orderedListItems.push(renderInlineMarkdown(ordered[1]));
+      continue;
+    }
+
+    flushList();
+    flushQuote();
+    paragraph.push(rawLine.trim());
+  }
+
+  if (inCode) flushCode();
+  flushBlocks();
+
+  return html.join("") || `<p class="muted-text">还没有笔记内容。</p>`;
+}
+
 function getPersonalNoteControls(articleId) {
   const sections = [...els.detail.querySelectorAll(".personal-note-section")];
   const section = articleId
@@ -523,7 +682,9 @@ function getPersonalNoteControls(articleId) {
   return {
     section,
     textarea: section.querySelector("#personal-note-input"),
+    preview: section.querySelector("#personal-note-preview"),
     saveButton: section.querySelector("#save-personal-note-btn"),
+    modeButtons: section.querySelectorAll("[data-note-mode]"),
     status: section.querySelector("#personal-note-status"),
     saveStatus: section.querySelector("#personal-note-save-status"),
   };
@@ -548,6 +709,25 @@ function rememberPersonalNoteCleanStatus(controls, text, tone = "") {
   setPersonalNoteStatus(controls, text, tone);
 }
 
+function updatePersonalNotePreview(controls) {
+  if (!controls?.preview || !controls?.textarea) return;
+  controls.preview.innerHTML = renderPersonalNoteMarkdown(controls.textarea.value);
+}
+
+function setPersonalNoteMode(controls, mode) {
+  if (!controls?.textarea || !controls?.preview) return;
+  const isEdit = mode === "edit";
+  controls.section.dataset.noteMode = isEdit ? "edit" : "preview";
+  controls.textarea.hidden = !isEdit;
+  controls.preview.hidden = isEdit;
+  if (!isEdit) updatePersonalNotePreview(controls);
+  controls.modeButtons?.forEach((button) => {
+    const active = button.dataset.noteMode === (isEdit ? "edit" : "preview");
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+}
+
 async function loadPersonalNote(articleId) {
   const controls = getPersonalNoteControls(articleId);
   if (!articleId || !controls) return;
@@ -564,6 +744,8 @@ async function loadPersonalNote(articleId) {
     current.textarea.dataset.savedValue = current.textarea.value;
     current.textarea.disabled = false;
     current.saveButton.disabled = false;
+    updatePersonalNotePreview(current);
+    setPersonalNoteMode(current, note.exists ? "preview" : "edit");
     rememberPersonalNoteCleanStatus(
       current,
       note.exists ? `已保存 ${formatNoteTimestamp(note.updated_at)}` : "新笔记",
@@ -599,6 +781,8 @@ async function savePersonalNote(articleId) {
     current.textarea.dataset.savedValue = current.textarea.value;
     current.saveButton.disabled = false;
     current.saveButton.textContent = "保存笔记";
+    updatePersonalNotePreview(current);
+    setPersonalNoteMode(current, "preview");
     rememberPersonalNoteCleanStatus(current, `已保存 ${formatNoteTimestamp(note.updated_at)}`, "success");
     setPersonalNoteSaveStatus(current, "保存完成", "success");
   } catch (error) {
@@ -629,6 +813,10 @@ function bindPersonalNoteActions() {
       );
       setPersonalNoteSaveStatus(controls, "");
     }
+    updatePersonalNotePreview(controls);
+  });
+  controls?.modeButtons?.forEach((button) => {
+    button.addEventListener("click", () => setPersonalNoteMode(controls, button.dataset.noteMode || "preview"));
   });
   controls?.saveButton?.addEventListener("click", () => savePersonalNote(articleId));
   loadPersonalNote(articleId);
