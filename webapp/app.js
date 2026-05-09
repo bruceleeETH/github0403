@@ -33,6 +33,7 @@ const state = {
   authors: [],
   stockDashboard: { stocks: [], rankings: [], summary: {} },
   stockReviewQueue: [],
+  sectorDashboard: { sectors: [], summary: {} },
   stockCatalogStatus: { exists: false, count: 0, markets: {} },
   stockPriceStatus: { exists: false, count: 0, stock_count: 0 },
   stockCandidate: null,
@@ -42,8 +43,11 @@ const state = {
   selectedAuthor: "",
   selectedArticleId: "",
   selectedStockId: "",
+  selectedSectorId: "",
   stockRange: "day",
   stockOrder: "desc",
+  sectorRange: "7d",
+  sectorSort: "heat",
   editingStockId: "",
   workspaceMode: "list",
   readerDetail: null,
@@ -55,10 +59,13 @@ const state = {
 const els = {
   articleModeBtn: document.querySelector("#article-mode-btn"),
   stockModeBtn: document.querySelector("#stock-mode-btn"),
+  sectorModeBtn: document.querySelector("#sector-mode-btn"),
   articleSideContent: document.querySelector("#article-side-content"),
   stockSideContent: document.querySelector("#stock-side-content"),
+  sectorSideContent: document.querySelector("#sector-side-content"),
   articleWorkspace: document.querySelector("#article-workspace"),
   stockWorkspace: document.querySelector("#stock-workspace"),
+  sectorWorkspace: document.querySelector("#sector-workspace"),
   authorSearch: document.querySelector("#author-search"),
   allAuthorsBtn: document.querySelector("#all-authors-btn"),
   totalArticleCount: document.querySelector("#total-article-count"),
@@ -69,6 +76,16 @@ const els = {
   stockTotalCount: document.querySelector("#stock-total-count"),
   stockSideCount: document.querySelector("#stock-side-count"),
   stockSideList: document.querySelector("#stock-side-list"),
+  sectorSearch: document.querySelector("#sector-search"),
+  allSectorsBtn: document.querySelector("#all-sectors-btn"),
+  sectorTotalCount: document.querySelector("#sector-total-count"),
+  sectorSideCount: document.querySelector("#sector-side-count"),
+  sectorSideList: document.querySelector("#sector-side-list"),
+  sectorSummaryNote: document.querySelector("#sector-summary-note"),
+  sectorCount: document.querySelector("#sector-count"),
+  sectorRangeTabs: document.querySelectorAll("[data-sector-range]"),
+  sectorSort: document.querySelector("#sector-sort"),
+  sectorRankList: document.querySelector("#sector-rank-list"),
   stockForm: document.querySelector("#stock-form"),
   stockFormTitle: document.querySelector("#stock-form-title"),
   stockFormStatus: document.querySelector("#stock-form-status"),
@@ -189,14 +206,31 @@ function normalizeStockAnalysisItem(item) {
 
 function findWatchedStock(item) {
   const normalized = normalizeStockAnalysisItem(item);
+  const normalizedCode = normalized.code.toUpperCase();
+  const normalizedName = normalized.name.replace(/\s+/g, "");
   return (state.stockDashboard.stocks || []).find((stock) => (
     stock.status !== "archived" &&
-    ((normalized.code && stock.code === normalized.code) || (normalized.name && stock.name === normalized.name))
+    ((normalizedCode && String(stock.code || "").toUpperCase() === normalizedCode) ||
+      (normalizedName && String(stock.name || "").replace(/\s+/g, "") === normalizedName))
   ));
 }
 
 function getStockSearchQuery() {
   return els.stockSearch?.value.trim() || "";
+}
+
+function getSectorSearchQuery() {
+  return els.sectorSearch?.value.trim() || "";
+}
+
+function formatSectorRange(value) {
+  return ({
+    today: "今日",
+    "3d": "近 3 天",
+    "7d": "近 7 天",
+    "30d": "近 30 天",
+    all: "全部",
+  })[value] || value;
 }
 
 function renderIndicatorItems(items, emptyText, type) {
@@ -218,6 +252,7 @@ function renderIndicatorItems(items, emptyText, type) {
             </div>
             ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
             ${mentions.length ? `<span class="indicator-mentions">${escapeHtml(mentions.slice(0, 4).join("、"))}</span>` : ""}
+            ${type === "sector" && label ? `<button type="button" class="secondary-btn sector-jump-btn" data-sector-id="${escapeHtml(label)}">查看板块时间线</button>` : ""}
           </div>
         `;
       }).join("")}
@@ -247,30 +282,62 @@ function renderArticleStockItems(items, meta, sectors, keywords) {
           reason ? `提及理由：${reason}` : "",
         ].filter(Boolean).join("；");
         return `
-          <div class="indicator-item article-stock-item">
+          <div class="indicator-item article-stock-item"
+            data-stock-name="${escapeHtml(normalized.name)}"
+            data-stock-code="${escapeHtml(normalized.code)}"
+            data-stock-tags="${escapeHtml(tagText)}"
+            data-stock-reason="${escapeHtml(watchReason)}">
             <div class="indicator-item-head">
               <strong>${escapeHtml(label)}</strong>
               <span class="sentiment-tag" data-sentiment="${escapeHtml(normalized.sentiment || "neutral")}">${escapeHtml(sentimentLabel(normalized.sentiment || "neutral"))}</span>
             </div>
             ${reason ? `<p>${escapeHtml(reason)}</p>` : ""}
             ${mentions.length ? `<span class="indicator-mentions">${escapeHtml(mentions.slice(0, 4).join("、"))}</span>` : ""}
-            <div class="article-stock-actions">
-              ${watched ? `
-                <button type="button" class="secondary-btn article-stock-open-btn" data-stock-id="${escapeHtml(watched.stock_id)}">已关注，查看</button>
-              ` : (normalized.code || normalized.name) ? `
-                <button type="button" class="primary-btn article-stock-add-btn"
-                  data-query="${escapeHtml(normalized.code || normalized.name)}"
-                  data-tags="${escapeHtml(tagText)}"
-                  data-reason="${escapeHtml(watchReason)}">加入股票池</button>
-              ` : `
-                <span class="inline-status" data-tone="warning">缺少名称和代码，无法一键加入</span>
-              `}
-            </div>
+            <div class="article-stock-actions">${renderArticleStockAction(normalized, watched, tagText, watchReason)}</div>
           </div>
         `;
       }).join("")}
     </div>
   `;
+}
+
+function renderArticleStockAction(normalized, watched, tagText, watchReason) {
+  if (watched) {
+    return `<button type="button" class="secondary-btn article-stock-open-btn" data-stock-id="${escapeHtml(watched.stock_id)}">已关注，查看</button>`;
+  }
+
+  if (normalized.code || normalized.name) {
+    return `
+      <button type="button" class="primary-btn article-stock-add-btn"
+        data-query="${escapeHtml(normalized.code || normalized.name)}"
+        data-tags="${escapeHtml(tagText)}"
+        data-reason="${escapeHtml(watchReason)}">加入股票池</button>
+    `;
+  }
+
+  return `<span class="inline-status" data-tone="warning">缺少名称和代码，无法一键加入</span>`;
+}
+
+function syncArticleStockActions() {
+  const cards = els.detail.querySelectorAll(".article-stock-item");
+  cards.forEach((card) => {
+    const normalized = {
+      name: card.dataset.stockName || "",
+      code: card.dataset.stockCode || "",
+      sentiment: "neutral",
+      reason: "",
+      mentions: [],
+    };
+    const actions = card.querySelector(".article-stock-actions");
+    if (!actions) return;
+    actions.innerHTML = renderArticleStockAction(
+      normalized,
+      findWatchedStock(normalized),
+      card.dataset.stockTags || "",
+      card.dataset.stockReason || ""
+    );
+  });
+  bindArticleStockActions();
 }
 
 function setBatchStatus(message, tone = "") {
@@ -395,6 +462,89 @@ function getVisibleStockRankings() {
     const haystack = `${stock.stock_id || ""} ${stock.code || ""} ${stock.name || ""} ${(stock.tags || []).join(" ")}`.toLowerCase();
     return haystack.includes(query);
   });
+}
+
+function getVisibleSectors() {
+  const query = getSectorSearchQuery().toLowerCase().replace(/\s+/g, "");
+  return (state.sectorDashboard.sectors || []).filter((sector) => {
+    if (!query) return true;
+    return String(sector.name || "").toLowerCase().replace(/\s+/g, "").includes(query);
+  });
+}
+
+function renderSectorSideList() {
+  const sectors = getVisibleSectors();
+  const total = state.sectorDashboard.summary?.sector_count || 0;
+  els.sectorTotalCount.textContent = String(total);
+  els.sectorSideCount.textContent = `${sectors.length} 个`;
+  els.allSectorsBtn.classList.toggle("active", state.selectedSectorId === "");
+
+  if (!sectors.length) {
+    els.sectorSideList.innerHTML = `<div class="empty-state compact">暂无匹配板块。</div>`;
+    return;
+  }
+
+  els.sectorSideList.innerHTML = sectors.map((sector) => {
+    const active = state.selectedSectorId === sector.sector_id;
+    return `
+      <button class="author-row sector-side-row${active ? " active" : ""}" type="button" data-sector-id="${escapeHtml(sector.sector_id)}">
+        <span class="author-row-main">
+          <strong>${escapeHtml(sector.name)}</strong>
+          <span>热度 ${escapeHtml(String(sector.heat_score || 0))} · ${escapeHtml(sector.latest_publish_time || "暂无时间")}</span>
+        </span>
+        <span class="author-row-meta">
+          <span>${sector.article_count || 0} 篇 / ${sector.author_count || 0} 位作者</span>
+          <span>${sector.stock_count || 0} 只个股</span>
+        </span>
+        <span class="keyword-strip">${escapeHtml((sector.related_stocks || []).slice(0, 3).join("、") || "暂无关联个股")}</span>
+      </button>
+    `;
+  }).join("");
+
+  els.sectorSideList.querySelectorAll("[data-sector-id]").forEach((button) => {
+    button.addEventListener("click", () => selectSector(button.dataset.sectorId));
+  });
+  scrollSelectedListItemIntoView(els.sectorSideList, ".sector-side-row.active");
+}
+
+function renderSectorRankings() {
+  const sectors = getVisibleSectors();
+  const summary = state.sectorDashboard.summary || {};
+  els.sectorCount.textContent = `${sectors.length} 个`;
+  els.sectorSummaryNote.textContent = `${formatSectorRange(state.sectorRange)} · ${summary.article_count || 0} 篇文章 · ${summary.event_count || 0} 条板块事件`;
+  if (els.sectorSort) els.sectorSort.value = state.sectorSort;
+
+  if (!sectors.length) {
+    els.sectorRankList.innerHTML = `<div class="empty-state">当前范围内暂无板块。需要先完成文章模型分析。</div>`;
+    return;
+  }
+
+  els.sectorRankList.innerHTML = sectors.map((sector, index) => {
+    const active = state.selectedSectorId === sector.sector_id;
+    return `
+      <button class="sector-rank-row${active ? " active" : ""}" type="button" data-sector-id="${escapeHtml(sector.sector_id)}">
+        <span class="sector-heat">${escapeHtml(String(sector.heat_score || 0))}</span>
+        <span class="sector-rank-main">
+          <strong>${index + 1}. ${escapeHtml(sector.name)}</strong>
+          <span>${sector.article_count || 0} 篇文章 · ${sector.author_count || 0} 位作者 · ${sector.stock_count || 0} 只个股</span>
+          <span>${escapeHtml((sector.related_stocks || []).slice(0, 5).join("、") || "暂无关联个股")}</span>
+        </span>
+        <span class="sector-rank-meta">
+          <span>最新</span>
+          <strong>${escapeHtml(formatStockDate(sector.latest_publish_time))}</strong>
+        </span>
+      </button>
+    `;
+  }).join("");
+
+  els.sectorRankList.querySelectorAll("[data-sector-id]").forEach((button) => {
+    button.addEventListener("click", () => selectSector(button.dataset.sectorId));
+  });
+}
+
+function renderSectors() {
+  renderSectorSideList();
+  renderSectorRankings();
 }
 
 function renderStockSideList() {
@@ -569,17 +719,28 @@ function renderArticles() {
 
 function renderWorkspace() {
   const showingStocks = state.activeView === "stocks";
-  els.articleSideContent.hidden = showingStocks;
+  const showingSectors = state.activeView === "sectors";
+  const showingArticles = !showingStocks && !showingSectors;
+  els.articleSideContent.hidden = !showingArticles;
   els.stockSideContent.hidden = !showingStocks;
-  els.articleWorkspace.hidden = showingStocks;
+  els.sectorSideContent.hidden = !showingSectors;
+  els.articleWorkspace.hidden = !showingArticles;
   els.stockWorkspace.hidden = !showingStocks;
-  els.articleModeBtn.classList.toggle("active", !showingStocks);
+  els.sectorWorkspace.hidden = !showingSectors;
+  els.articleModeBtn.classList.toggle("active", showingArticles);
   els.stockModeBtn.classList.toggle("active", showingStocks);
-  els.articleModeBtn.setAttribute("aria-selected", showingStocks ? "false" : "true");
+  els.sectorModeBtn.classList.toggle("active", showingSectors);
+  els.articleModeBtn.setAttribute("aria-selected", showingArticles ? "true" : "false");
   els.stockModeBtn.setAttribute("aria-selected", showingStocks ? "true" : "false");
+  els.sectorModeBtn.setAttribute("aria-selected", showingSectors ? "true" : "false");
 
   if (showingStocks) {
     renderStocks();
+    return;
+  }
+
+  if (showingSectors) {
+    renderSectors();
     return;
   }
 
@@ -993,15 +1154,16 @@ async function addArticleStockToPool(button) {
       }),
     });
     await refreshStocks();
-    button.textContent = "已加入，查看";
-    button.classList.remove("primary-btn", "article-stock-add-btn");
-    button.classList.add("secondary-btn", "article-stock-open-btn");
-    button.dataset.stockId = result.stock?.stock_id || "";
-    button.disabled = false;
+    syncArticleStockActions();
+    if (result.stock?.stock_id) button.dataset.stockId = result.stock.stock_id;
   } catch (error) {
     button.disabled = false;
     button.textContent = error.message?.includes("已在关注池") ? "已关注" : "重试加入";
     button.title = error.message || "加入失败";
+    if (error.message?.includes("已在关注池")) {
+      await refreshStocks();
+      syncArticleStockActions();
+    }
   }
 }
 
@@ -1015,6 +1177,17 @@ function bindArticleStockActions() {
       if (!stockId) return;
       await setViewMode("stocks");
       await selectStock(stockId);
+    });
+  });
+}
+
+function bindSectorJumpActions() {
+  els.detail.querySelectorAll(".sector-jump-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const sectorId = button.dataset.sectorId;
+      if (!sectorId) return;
+      await setViewMode("sectors");
+      await selectSector(sectorId);
     });
   });
 }
@@ -1052,6 +1225,7 @@ function bindDetailFileActions() {
   const frame = els.detail.querySelector("#offline-frame");
   bindPersonalNoteActions();
   bindArticleStockActions();
+  bindSectorJumpActions();
 
   els.detail.querySelector("[data-offline-url]")?.addEventListener("click", (event) => {
     const url = event.currentTarget.dataset.offlineUrl;
@@ -1204,6 +1378,103 @@ function renderStockDetail(detail) {
     button.addEventListener("click", async () => {
       setViewMode("articles");
       await selectArticle(button.dataset.articleId);
+    });
+  });
+}
+
+function renderSectorDetail(detail) {
+  setDetailHeading("板块详情", "热度构成、相关个股和时间线");
+  const sentiments = detail.sentiment_counts || {};
+  els.detail.innerHTML = `
+    <article class="detail-content">
+      <header class="detail-title-block">
+        <span class="sentiment-tag" data-sentiment="neutral">热度 ${escapeHtml(String(detail.heat_score || 0))}</span>
+        <h3>${escapeHtml(detail.name || "未命名板块")}</h3>
+        <p>${detail.article_count || 0} 篇文章 · ${detail.author_count || 0} 位作者 · ${detail.stock_count || 0} 只个股</p>
+      </header>
+
+      <section class="detail-section">
+        <h4>热度构成</h4>
+        <div class="metric-grid">
+          <div class="metric-item">
+            <span>提及</span>
+            <strong>${escapeHtml(String(detail.mention_count || 0))}</strong>
+            <p>板块事件</p>
+          </div>
+          <div class="metric-item">
+            <span>文章</span>
+            <strong>${escapeHtml(String(detail.article_count || 0))}</strong>
+            <p>去重文章</p>
+          </div>
+          <div class="metric-item">
+            <span>作者</span>
+            <strong>${escapeHtml(String(detail.author_count || 0))}</strong>
+            <p>去重作者</p>
+          </div>
+          <div class="metric-item">
+            <span>情绪</span>
+            <strong>正 ${sentiments.positive || 0}</strong>
+            <p>中 ${sentiments.neutral || 0} / 负 ${sentiments.negative || 0}</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>关联个股</h4>
+        <div class="pill-row">
+          ${(detail.related_stocks || []).length
+            ? detail.related_stocks.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")
+            : "<span class=\"muted-text\">暂无关联个股</span>"}
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>主要作者</h4>
+        <div class="pill-row">
+          ${(detail.top_authors || []).length
+            ? detail.top_authors.map((item) => `<span class="pill">${escapeHtml(item)}</span>`).join("")
+            : "<span class=\"muted-text\">暂无作者</span>"}
+        </div>
+      </section>
+
+      <section class="detail-section">
+        <h4>时间线</h4>
+        <div class="sector-timeline">
+          ${(detail.timeline || []).map((event) => `
+            <div class="sector-timeline-item">
+              <div class="sector-timeline-head">
+                <strong>${escapeHtml(event.title || "未命名文章")}</strong>
+                <span class="sentiment-tag" data-sentiment="${escapeHtml(event.sentiment || "neutral")}">${escapeHtml(sentimentLabel(event.sentiment || "neutral"))}</span>
+              </div>
+              <div class="sector-timeline-meta">${escapeHtml(event.author || "未知作者")} · ${escapeHtml(event.publish_time || event.date || "")}</div>
+              ${event.reason ? `<p>${escapeHtml(event.reason)}</p>` : ""}
+              ${(event.mentions || []).length ? `<span class="indicator-mentions">${escapeHtml(event.mentions.slice(0, 4).join("、"))}</span>` : ""}
+              ${(event.related_stocks || []).length ? `<div class="pill-row">${event.related_stocks.slice(0, 6).map((stock) => `<span class="pill">${escapeHtml(stock)}</span>`).join("")}</div>` : ""}
+              ${(event.viewpoints || []).length ? `
+                <div class="viewpoint-list">
+                  ${event.viewpoints.map((viewpoint) => `
+                    <div class="viewpoint-item">
+                      <strong>${escapeHtml(viewpoint.id || "观点")}</strong>
+                      <p>${escapeHtml(viewpoint.text || "")}</p>
+                      ${viewpoint.evidence ? `<span>${escapeHtml(viewpoint.evidence)}</span>` : ""}
+                    </div>
+                  `).join("")}
+                </div>
+              ` : ""}
+              <button type="button" class="secondary-btn sector-article-open-btn" data-article-id="${escapeHtml(event.article_id || "")}">打开文章</button>
+            </div>
+          `).join("") || "<p class=\"muted-text\">暂无时间线事件</p>"}
+        </div>
+      </section>
+    </article>
+  `;
+
+  els.detail.querySelectorAll(".sector-article-open-btn").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const articleId = button.dataset.articleId;
+      if (!articleId) return;
+      await setViewMode("articles");
+      await selectArticle(articleId);
     });
   });
 }
@@ -1516,7 +1787,11 @@ async function archiveSelectedStock(stockId) {
     await fetchJson(`/api/stocks/${encodeURIComponent(stockId)}`, { method: "DELETE" });
     state.selectedStockId = "";
     await refreshStocks();
-    renderEmptyDetail("股票已归档。");
+    if (state.activeView === "stocks") {
+      renderEmptyDetail("股票已归档。");
+    } else {
+      syncArticleStockActions();
+    }
   } catch (error) {
     renderEmptyDetail(`归档失败：${error.message}`);
   }
@@ -1527,6 +1802,7 @@ function renderAll() {
   renderWorkspace();
   renderQueue();
   renderStocks();
+  renderSectors();
 }
 
 function applyDetailLayoutConfig() {
@@ -1640,7 +1916,7 @@ function setupDetailResizer() {
 }
 
 async function setViewMode(viewMode) {
-  state.activeView = viewMode === "stocks" ? "stocks" : "articles";
+  state.activeView = viewMode === "stocks" ? "stocks" : (viewMode === "sectors" ? "sectors" : "articles");
   if (state.activeView === "stocks") {
     state.workspaceMode = "list";
     state.readerDetail = null;
@@ -1658,6 +1934,23 @@ async function setViewMode(viewMode) {
     return;
   }
 
+  if (state.activeView === "sectors") {
+    state.workspaceMode = "list";
+    state.readerDetail = null;
+    setDetailHeading("板块详情", "热度构成、相关个股和时间线");
+    renderWorkspace();
+    if (!state.sectorDashboard.sectors.length) await refreshSectors();
+    const selectedStillVisible = state.sectorDashboard.sectors.some((sector) => sector.sector_id === state.selectedSectorId);
+    if (state.selectedSectorId && selectedStillVisible) {
+      await selectSector(state.selectedSectorId);
+    } else {
+      const first = getVisibleSectors()[0];
+      if (first?.sector_id) await selectSector(first.sector_id);
+      else renderEmptyDetail("完成文章模型分析后，这里会显示热门板块时间线。");
+    }
+    return;
+  }
+
   setDetailHeading("文章详情", "摘要、观点和本地文件入口");
   renderWorkspace();
   if (state.selectedArticleId) await selectArticle(state.selectedArticleId);
@@ -1665,6 +1958,28 @@ async function setViewMode(viewMode) {
     const first = getFilteredArticles()[0];
     if (first) await selectArticle(first.article_id);
     else renderEmptyDetail("粘贴链接开始抓取，或从每日文章中选择一篇查看。");
+  }
+}
+
+async function refreshSectors() {
+  const data = await fetchJson(`/api/sectors?range=${encodeURIComponent(state.sectorRange)}&sort=${encodeURIComponent(state.sectorSort)}&q=${encodeURIComponent(getSectorSearchQuery())}`);
+  state.sectorDashboard = data;
+  renderSectors();
+  return data;
+}
+
+async function selectSector(sectorId) {
+  if (!sectorId) return;
+  state.activeView = "sectors";
+  state.selectedSectorId = sectorId;
+  renderWorkspace();
+  els.detail.innerHTML = `<div class="detail-empty">正在加载板块时间线...</div>`;
+  try {
+    const detail = await fetchJson(`/api/sectors/${encodeURIComponent(sectorId)}?range=${encodeURIComponent(state.sectorRange)}`);
+    renderSectorDetail(detail);
+    renderSectors();
+  } catch (error) {
+    renderEmptyDetail(`加载失败：${error.message}`);
   }
 }
 
@@ -1693,6 +2008,7 @@ async function refreshStocks() {
   state.stockReviewQueue = review.items || [];
   state.stockPriceStatus = priceStatus;
   renderStocks();
+  syncArticleStockActions();
 }
 
 async function refreshStockCatalogStatus() {
@@ -1817,13 +2133,14 @@ function closeArticleReader() {
 }
 
 async function refreshAll() {
-  const [{ articles }, { authors }, stockDashboard, review, catalogStatus, priceStatus] = await Promise.all([
+  const [{ articles }, { authors }, stockDashboard, review, catalogStatus, priceStatus, sectorDashboard] = await Promise.all([
     fetchJson("/api/articles"),
     fetchJson("/api/authors"),
     fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(getStockSearchQuery())}`),
     fetchJson("/api/stocks/review-queue"),
     fetchJson("/api/stocks/catalog/status"),
     fetchJson("/api/stocks/prices/status"),
+    fetchJson(`/api/sectors?range=${encodeURIComponent(state.sectorRange)}&sort=${encodeURIComponent(state.sectorSort)}&q=${encodeURIComponent(getSectorSearchQuery())}`),
   ]);
   state.articles = articles;
   state.authors = authors;
@@ -1831,12 +2148,21 @@ async function refreshAll() {
   state.stockReviewQueue = review.items || [];
   state.stockCatalogStatus = catalogStatus;
   state.stockPriceStatus = priceStatus;
+  state.sectorDashboard = sectorDashboard;
   renderAll();
 
   if (state.activeView === "stocks") {
     if (!state.selectedStockId) {
       const first = getVisibleStockRankings()[0];
       if (first?.stock?.stock_id) await selectStock(first.stock.stock_id);
+    }
+    return;
+  }
+
+  if (state.activeView === "sectors") {
+    if (!state.selectedSectorId) {
+      const first = getVisibleSectors()[0];
+      if (first?.sector_id) await selectSector(first.sector_id);
     }
     return;
   }
@@ -1912,6 +2238,7 @@ els.authorSearch.addEventListener("input", renderAuthors);
 
 els.articleModeBtn.addEventListener("click", () => setViewMode("articles"));
 els.stockModeBtn.addEventListener("click", () => setViewMode("stocks"));
+els.sectorModeBtn.addEventListener("click", () => setViewMode("sectors"));
 
 els.stockSearch.addEventListener("input", async () => {
   try {
@@ -1928,6 +2255,37 @@ els.allStocksBtn.addEventListener("click", async () => {
   const first = getVisibleStockRankings()[0];
   if (first?.stock?.stock_id) selectStock(first.stock.stock_id);
   else renderEmptyDetail("股票池为空，先添加一只股票。");
+});
+
+els.sectorSearch.addEventListener("input", async () => {
+  try {
+    await refreshSectors();
+  } catch (error) {
+    renderEmptyDetail(`板块筛选失败：${error.message}`);
+  }
+});
+
+els.allSectorsBtn.addEventListener("click", async () => {
+  state.selectedSectorId = "";
+  els.sectorSearch.value = "";
+  await refreshSectors();
+  const first = getVisibleSectors()[0];
+  if (first?.sector_id) selectSector(first.sector_id);
+  else renderEmptyDetail("当前范围内暂无板块。");
+});
+
+els.sectorRangeTabs.forEach((button) => {
+  button.addEventListener("click", async () => {
+    state.sectorRange = button.dataset.sectorRange || "7d";
+    els.sectorRangeTabs.forEach((tab) => tab.classList.toggle("active", tab === button));
+    await refreshSectors();
+    if (state.selectedSectorId) await selectSector(state.selectedSectorId);
+  });
+});
+
+els.sectorSort.addEventListener("change", async () => {
+  state.sectorSort = els.sectorSort.value || "heat";
+  await refreshSectors();
 });
 
 els.stockForm.addEventListener("submit", submitStockForm);

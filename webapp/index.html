@@ -21,6 +21,8 @@
                         role="tab" aria-selected="true">文章研究</button>
                     <button id="stock-mode-btn" class="app-switch-btn" type="button" data-view="stocks" role="tab"
                         aria-selected="false">股票追踪</button>
+                    <button id="sector-mode-btn" class="app-switch-btn" type="button" data-view="sectors" role="tab"
+                        aria-selected="false">板块追踪</button>
                 </div>
             </header>
 
@@ -57,6 +59,24 @@
                     <span id="stock-side-count" class="count-label">0 只</span>
                 </div>
                 <div id="stock-side-list" class="author-list stock-side-list" aria-live="polite"></div>
+            </div>
+
+            <div id="sector-side-content" hidden>
+                <div class="side-controls">
+                    <label class="field-label" for="sector-search">搜索板块</label>
+                    <input id="sector-search" class="text-input" type="search" placeholder="AI算力、半导体、机器人"
+                        autocomplete="off" />
+                    <button id="all-sectors-btn" class="author-filter active" type="button">
+                        <span>热门板块</span>
+                        <strong id="sector-total-count">0</strong>
+                    </button>
+                </div>
+
+                <div class="pane-title-row">
+                    <h2>板块列表</h2>
+                    <span id="sector-side-count" class="count-label">0 个</span>
+                </div>
+                <div id="sector-side-list" class="author-list sector-side-list" aria-live="polite"></div>
             </div>
         </aside>
 
@@ -188,6 +208,44 @@
                     </div>
 
                     <div id="stock-rank-list" class="stock-rank-list" aria-live="polite"></div>
+                </section>
+            </div>
+
+            <div id="sector-workspace" hidden>
+                <section class="ingest-panel sector-control-panel" aria-labelledby="sector-hot-title">
+                    <div class="pane-title-row">
+                        <div>
+                            <h2 id="sector-hot-title">热门板块</h2>
+                            <p id="sector-summary-note" class="section-note">从已保存文章的模型分析中聚合。</p>
+                        </div>
+                        <span id="sector-count" class="count-label">0 个</span>
+                    </div>
+
+                    <div class="stock-toolbar">
+                        <div class="range-tabs sector-range-tabs" role="tablist" aria-label="板块周期">
+                            <button class="range-tab" type="button" data-sector-range="today">今日</button>
+                            <button class="range-tab active" type="button" data-sector-range="7d">近 7 天</button>
+                            <button class="range-tab" type="button" data-sector-range="30d">近 30 天</button>
+                            <button class="range-tab" type="button" data-sector-range="all">全部</button>
+                        </div>
+                        <select id="sector-sort" class="text-input compact-select" aria-label="板块排序">
+                            <option value="heat">按热度</option>
+                            <option value="latest">按最新</option>
+                            <option value="articles">按文章数</option>
+                            <option value="authors">按作者数</option>
+                            <option value="stocks">按个股数</option>
+                        </select>
+                    </div>
+                </section>
+
+                <section class="article-panel sector-rank-panel" aria-labelledby="sector-rank-title">
+                    <div class="pane-title-row article-toolbar">
+                        <div>
+                            <h2 id="sector-rank-title">板块热度榜</h2>
+                            <p class="section-note">热度综合文章数、作者数、个股数、重要度和近期权重。</p>
+                        </div>
+                    </div>
+                    <div id="sector-rank-list" class="sector-rank-list" aria-live="polite"></div>
                 </section>
             </div>
         </main>

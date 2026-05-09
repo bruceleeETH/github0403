@@ -11,6 +11,7 @@ import { captureArticleToLocal } from "../src/core/capture-article.mjs";
 import { buildMarkdown } from "../src/core/export-article.mjs";
 import { listAccountArticles } from "../src/core/list-account-articles.mjs";
 import { readPersonalNote, writePersonalNote } from "../src/core/personal-note.mjs";
+import { buildSectorDashboard, loadSectorDetail } from "../src/core/sector-tracker.mjs";
 import {
     addStock,
     archiveStock,
@@ -78,6 +79,22 @@ function loadIndex() {
             analysis_provider: "",
             analysis_model: "",
         };
+    });
+}
+
+function loadAnalyzedArticleRecords() {
+    return loadIndex().map((record) => {
+        const articleDir = safeJoin(DEFAULT_OUTPUT_DIR, record.article_dir);
+        const analysisPath = path.join(articleDir, "analysis.json");
+        if (!fs.existsSync(analysisPath)) return record;
+        try {
+            return {
+                ...record,
+                analysis: JSON.parse(fs.readFileSync(analysisPath, "utf-8")),
+            };
+        } catch {
+            return record;
+        }
     });
 }
 
@@ -617,6 +634,25 @@ async function handleApi(req, res, url) {
 
     if (req.method === "GET" && url.pathname === "/api/authors") {
         return sendJson(res, 200, { authors: buildAuthorSummary(loadIndex()) });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/sectors") {
+        const dashboard = buildSectorDashboard(loadAnalyzedArticleRecords(), {
+            range: url.searchParams.get("range") || "7d",
+            sort: url.searchParams.get("sort") || "heat",
+            query: url.searchParams.get("q") || "",
+            limit: Number(url.searchParams.get("limit") || 100),
+        });
+        return sendJson(res, 200, dashboard);
+    }
+
+    if (req.method === "GET" && url.pathname.startsWith("/api/sectors/")) {
+        const sectorId = decodeURIComponent(url.pathname.replace("/api/sectors/", ""));
+        const detail = loadSectorDetail(loadAnalyzedArticleRecords(), sectorId, {
+            range: url.searchParams.get("range") || "all",
+        });
+        if (!detail) return sendJson(res, 404, { error: "板块不存在" });
+        return sendJson(res, 200, detail);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/api/articles/")) {
