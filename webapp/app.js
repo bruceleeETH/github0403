@@ -10,6 +10,22 @@ import {
   getArticleDateKey,
   parseBatchLinks,
 } from "./research-utils.mjs";
+import { fetchJson } from "./api-client.mjs";
+import {
+  analysisSourceLabel,
+  formatPct,
+  formatPrice,
+  formatPriceUpdateDetail,
+  formatStockDate,
+  hasModelAnalysis,
+  indicatorLabels,
+  pctTone,
+  rangeLabel,
+  sentimentLabel,
+  stockOptionLabel,
+  stockTagsText,
+} from "./formatters.mjs";
+import { renderPersonalNoteMarkdown } from "./note-markdown.mjs";
 
 const state = {
   activeView: "articles",
@@ -112,114 +128,6 @@ const statusLabels = {
   failed: "失败",
 };
 
-async function fetchJson(url, options) {
-  const resp = await fetch(url, options);
-  const text = await resp.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
-    throw new Error(`服务返回了非 JSON 响应：${text.slice(0, 120)}`);
-  }
-  if (!resp.ok) {
-    const error = new Error(data.error || "请求失败");
-    error.data = data;
-    throw error;
-  }
-  return data;
-}
-
-function sentimentLabel(value) {
-  const labels = {
-    positive: "积极",
-    neutral: "中性",
-    negative: "消极",
-    bullish: "偏多",
-    bearish: "偏空",
-    mixed: "分歧",
-    low: "低",
-    medium: "中",
-    high: "高",
-    unknown: "未知",
-    intraday: "日内",
-    short_term: "短期",
-    mid_term: "中期",
-    long_term: "长期",
-  };
-  return labels[value] || value || "未知";
-}
-
-function analysisSourceLabel(analysis) {
-  return [analysis?.analysis_provider, analysis?.analysis_model].filter(Boolean).join(" / ");
-}
-
-function hasModelAnalysis(analysis) {
-  return Boolean(analysis?.analysis_provider && analysis?.analysis_model && analysis.analysis_provider !== "rule" && analysis.analysis_status !== "failed");
-}
-
-function indicatorLabels(items, limit = 6) {
-  if (!Array.isArray(items)) return [];
-  return items
-    .map((item) => {
-      if (typeof item === "string") return item.trim();
-      const name = String(item?.name || "").trim();
-      const code = String(item?.code || "").trim();
-      if (name && code) return `${name}(${code})`;
-      return name || code;
-    })
-    .filter(Boolean)
-    .slice(0, limit);
-}
-
-function formatStockDate(value) {
-  if (!value) return "暂无";
-  const text = String(value);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) return text;
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatPrice(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(2) : "--";
-}
-
-function formatPct(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "--";
-  return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
-}
-
-function pctTone(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number === 0) return "flat";
-  return number > 0 ? "up" : "down";
-}
-
-function rangeLabel(value) {
-  return ({
-    day: "日",
-    "5d": "五日",
-    week: "周",
-  })[value] || value;
-}
-
-function stockTagsText(tags) {
-  return Array.isArray(tags) && tags.length ? tags.join("、") : "未设置标签";
-}
-
-function stockOptionLabel(stock) {
-  if (!stock) return "";
-  return `${stock.name || stock.code} ${stock.stock_id || stock.code}`;
-}
-
 function formatCatalogStatus(status = {}) {
   if (!status.exists || !status.count) return "股票目录未更新";
   const markets = Object.entries(status.markets || {})
@@ -240,47 +148,6 @@ function formatPriceStatus(status = {}) {
   const last = status.last_result || {};
   const lastNote = last.failed ? ` · 上次失败 ${last.failed} 只` : (last.fallback_count ? ` · 备用源 ${last.fallback_count} 只` : "");
   return `${status.stock_count || 0} 只 / ${status.count || 0} 条 · 最新交易日 ${latest}${updated}${lastNote}`;
-}
-
-function priceProviderLabel(source) {
-  return ({
-    "akshare.stock_zh_a_hist": "AkShare",
-    "akshare.stock_hk_hist": "AkShare",
-    "akshare.stock_us_hist": "AkShare",
-    "tencent.fqkline": "腾讯备用源",
-  })[source] || source || "未知源";
-}
-
-function compactErrorText(text) {
-  return String(text || "")
-    .replace(/\s+/g, " ")
-    .replace(/HTTPSConnectionPool\([^)]*\): /g, "")
-    .replace(/Max retries exceeded with url: .*?\(Caused by /g, "")
-    .replace(/\)+$/g, "")
-    .slice(0, 120);
-}
-
-function formatPriceUpdateDetail(result = {}) {
-  const fallbackItems = Array.isArray(result.items)
-    ? result.items.filter((item) => item.used_fallback)
-    : [];
-  const failures = Array.isArray(result.failures) ? result.failures : [];
-  const parts = [];
-  if (fallbackItems.length) {
-    const names = fallbackItems.slice(0, 3).map((item) => item.name || item.stock_id).join("、");
-    parts.push(`已自动切换备用源：${names}${fallbackItems.length > 3 ? " 等" : ""}`);
-  }
-  if (failures.length) {
-    const first = failures[0];
-    const providerErrors = Array.isArray(first.provider_errors) ? first.provider_errors : [];
-    const providerDetail = providerErrors.length
-      ? providerErrors.map((item) => `${priceProviderLabel(item.provider)} ${compactErrorText(item.error)}`).join("；")
-      : compactErrorText(first.error);
-    parts.push(`${first.name || first.stock_id} 失败：${first.hint || providerDetail}`);
-    if (providerDetail && first.hint) parts.push(`接口明细：${providerDetail}`);
-    if (failures.length > 1) parts.push(`其余 ${failures.length - 1} 只也未更新`);
-  }
-  return parts.join("。");
 }
 
 function renderPriceUpdateDetail(result = null, tone = "") {
@@ -422,6 +289,53 @@ function getFilteredArticles() {
   });
 }
 
+function scrollSelectedListItemIntoView(container, selector) {
+  const selected = container?.querySelector(selector);
+  selected?.scrollIntoView({ block: "nearest" });
+}
+
+function getActiveArticleIds() {
+  return getFilteredArticles().map((article) => article.article_id).filter(Boolean);
+}
+
+function getActiveStockIds() {
+  return getVisibleStockRankings()
+    .map((item) => item.stock?.stock_id)
+    .filter(Boolean);
+}
+
+function getNextSelection(items, currentId, delta) {
+  if (!items.length) return "";
+  const currentIndex = items.indexOf(currentId);
+  if (currentIndex === -1) return delta > 0 ? items[0] : items[items.length - 1];
+  const nextIndex = Math.min(Math.max(currentIndex + delta, 0), items.length - 1);
+  return items[nextIndex];
+}
+
+function shouldIgnoreListHotkeys(target) {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  if (target.closest("input, textarea, select, [contenteditable='true']")) return true;
+  if (target.closest("#detail-resizer")) return true;
+  return false;
+}
+
+async function moveArticleSelection(delta) {
+  const articleIds = getActiveArticleIds();
+  const nextId = getNextSelection(articleIds, state.selectedArticleId, delta);
+  if (!nextId || nextId === state.selectedArticleId) return false;
+  await selectArticle(nextId);
+  return true;
+}
+
+async function moveStockSelection(delta) {
+  const stockIds = getActiveStockIds();
+  const nextId = getNextSelection(stockIds, state.selectedStockId, delta);
+  if (!nextId || nextId === state.selectedStockId) return false;
+  await selectStock(nextId);
+  return true;
+}
+
 function renderAuthors() {
   const query = els.authorSearch.value.trim().toLowerCase();
   const authors = state.authors.filter((author) => {
@@ -516,6 +430,7 @@ function renderStockSideList() {
   els.stockSideList.querySelectorAll("[data-stock-id]").forEach((button) => {
     button.addEventListener("click", () => selectStock(button.dataset.stockId));
   });
+  scrollSelectedListItemIntoView(els.stockSideList, ".stock-side-row.active");
 }
 
 function renderStockRankings() {
@@ -553,6 +468,7 @@ function renderStockRankings() {
   els.stockRankList.querySelectorAll("[data-stock-id]").forEach((button) => {
     button.addEventListener("click", () => selectStock(button.dataset.stockId));
   });
+  scrollSelectedListItemIntoView(els.stockRankList, ".stock-rank-row.active");
 }
 
 function renderStocks() {
@@ -648,6 +564,7 @@ function renderArticles() {
       openArticleReader(button.dataset.articleId);
     });
   });
+  scrollSelectedListItemIntoView(els.articles, ".article-row.active");
 }
 
 function renderWorkspace() {
@@ -929,158 +846,6 @@ function formatNoteTimestamp(value) {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function renderInlineMarkdown(text) {
-  let html = escapeHtml(text || "");
-  html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
-  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  return html;
-}
-
-function renderMarkdownList(items, ordered = false) {
-  const tag = ordered ? "ol" : "ul";
-  return `<${tag}>${items.map((item) => `<li>${item}</li>`).join("")}</${tag}>`;
-}
-
-function renderPersonalNoteMarkdown(markdown) {
-  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
-  const html = [];
-  let paragraph = [];
-  let listItems = [];
-  let orderedListItems = [];
-  let quoteLines = [];
-  let inCode = false;
-  let codeLines = [];
-  let inFrontmatter = false;
-  let frontmatterLines = [];
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    html.push(`<p>${renderInlineMarkdown(paragraph.join(" "))}</p>`);
-    paragraph = [];
-  };
-  const flushList = () => {
-    if (listItems.length) {
-      html.push(renderMarkdownList(listItems));
-      listItems = [];
-    }
-    if (orderedListItems.length) {
-      html.push(renderMarkdownList(orderedListItems, true));
-      orderedListItems = [];
-    }
-  };
-  const flushQuote = () => {
-    if (!quoteLines.length) return;
-    html.push(`<blockquote>${quoteLines.map((line) => `<p>${renderInlineMarkdown(line)}</p>`).join("")}</blockquote>`);
-    quoteLines = [];
-  };
-  const flushCode = () => {
-    html.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
-    codeLines = [];
-  };
-  const flushBlocks = () => {
-    flushParagraph();
-    flushList();
-    flushQuote();
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const rawLine = lines[index];
-    const line = rawLine.trim();
-
-    if (line === "---" && index === 0) {
-      inFrontmatter = true;
-      continue;
-    }
-    if (inFrontmatter) {
-      if (line === "---") {
-        inFrontmatter = false;
-        if (frontmatterLines.length) {
-          html.push(`
-            <details class="personal-note-meta">
-              <summary>元数据</summary>
-              <pre>${escapeHtml(frontmatterLines.join("\n"))}</pre>
-            </details>
-          `);
-          frontmatterLines = [];
-        }
-      } else {
-        frontmatterLines.push(rawLine);
-      }
-      continue;
-    }
-
-    if (line.startsWith("```")) {
-      if (inCode) {
-        flushCode();
-        inCode = false;
-      } else {
-        flushBlocks();
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      codeLines.push(rawLine);
-      continue;
-    }
-
-    if (!line) {
-      flushBlocks();
-      continue;
-    }
-
-    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
-    if (heading) {
-      flushBlocks();
-      const level = heading[1].length;
-      html.push(`<h${level}>${renderInlineMarkdown(heading[2])}</h${level}>`);
-      continue;
-    }
-
-    if (line.startsWith(">")) {
-      flushParagraph();
-      flushList();
-      quoteLines.push(line.replace(/^>\s?/, ""));
-      continue;
-    }
-
-    const task = /^[-*]\s+\[( |x|X)\]\s+(.+)$/.exec(line);
-    if (task) {
-      flushParagraph();
-      flushQuote();
-      const checked = task[1].toLowerCase() === "x";
-      listItems.push(`<label class="note-task"><input type="checkbox" disabled${checked ? " checked" : ""}> <span>${renderInlineMarkdown(task[2])}</span></label>`);
-      continue;
-    }
-
-    const bullet = /^[-*]\s+(.+)$/.exec(line);
-    if (bullet) {
-      flushParagraph();
-      flushQuote();
-      listItems.push(renderInlineMarkdown(bullet[1]));
-      continue;
-    }
-
-    const ordered = /^\d+\.\s+(.+)$/.exec(line);
-    if (ordered) {
-      flushParagraph();
-      flushQuote();
-      orderedListItems.push(renderInlineMarkdown(ordered[1]));
-      continue;
-    }
-
-    flushList();
-    flushQuote();
-    paragraph.push(rawLine.trim());
-  }
-
-  if (inCode) flushCode();
-  flushBlocks();
-
-  return html.join("") || `<p class="muted-text">还没有笔记内容。</p>`;
 }
 
 function getPersonalNoteControls(articleId) {
@@ -2229,6 +1994,15 @@ els.rangeTabs.forEach((button) => {
 });
 
 window.addEventListener("keydown", (event) => {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  if (shouldIgnoreListHotkeys(event.target)) return;
+  if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const handler = state.activeView === "stocks" ? moveStockSelection : moveArticleSelection;
+    event.preventDefault();
+    handler(delta);
+    return;
+  }
   if (event.key === "Escape" && state.workspaceMode === "reader") {
     closeArticleReader();
   }

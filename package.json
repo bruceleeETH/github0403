@@ -7,15 +7,11 @@
         "wechat:puppeteer": "node save_wechat_article_puppeteer.mjs",
         "app": "node server/server.mjs",
         "start": "node server/server.mjs",
-        "test": "node --test",
-        "tauri:dev": "tauri dev",
-        "tauri:build": "tauri build"
+        "test": "node --test"
     },
     "dependencies": {
         "puppeteer": "^24.6.1",
         "turndown": "^7.2.0"
     },
-    "devDependencies": {
-        "@tauri-apps/cli": "^2.0.0"
-    }
+    "devDependencies": {}
 }

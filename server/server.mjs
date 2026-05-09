@@ -29,6 +29,8 @@ import {
 import { cleanAuthorName, loadArticleIndex, upsertIndexRecord } from "../src/storage/article-index.mjs";
 import { buildIndexRecord } from "../src/storage/file-layout.mjs";
 import { encodeLibraryPath, safeJoin } from "../src/storage/paths.mjs";
+import { getErrorPayload, HttpError, readJsonBody, requireMethod, sendJson, sendText } from "../src/server/http-utils.mjs";
+import { SerialTaskRunner, TaskBusyError, taskBusyPayload } from "../src/server/task-queue.mjs";
 import { isWeChatArticleUrl } from "../src/utils/url.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -41,36 +43,9 @@ const PROJECT_VENV_PYTHON = path.join(PROJECT_ROOT, ".venv", "bin", "python");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT || 4318);
 const execFileAsync = promisify(execFile);
-
-function readJsonBody(req) {
-    return new Promise((resolve, reject) => {
-        let body = "";
-        req.on("data", (chunk) => {
-            body += chunk;
-            if (body.length > 1024 * 1024) {
-                reject(new Error("请求体过大"));
-            }
-        });
-        req.on("end", () => {
-            try {
-                resolve(body ? JSON.parse(body) : {});
-            } catch {
-                reject(new Error("无效的 JSON 请求体"));
-            }
-        });
-        req.on("error", reject);
-    });
-}
-
-function sendJson(res, statusCode, payload) {
-    res.writeHead(statusCode, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify(payload, null, 2));
-}
-
-function sendText(res, statusCode, payload, contentType = "text/plain; charset=utf-8") {
-    res.writeHead(statusCode, { "Content-Type": contentType });
-    res.end(payload);
-}
+const captureRunner = new SerialTaskRunner("capture");
+const stockCatalogRunner = new SerialTaskRunner("stock_catalog_update");
+const stockPriceRunner = new SerialTaskRunner("stock_price_update");
 
 function getMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
@@ -405,15 +380,137 @@ async function handleApi(req, res, url) {
         return sendJson(res, 200, getStockCatalogStatus(STOCK_TRACKING_DIR));
     }
 
-    if (req.method === "POST" && url.pathname === "/api/stocks/catalog/update") {
+    if (req.method === "GET" && url.pathname === "/api/tasks") {
+        return sendJson(res, 200, {
+            tasks: {
+                capture: captureRunner.getStatus(),
+                stock_catalog_update: stockCatalogRunner.getStatus(),
+                stock_price_update: stockPriceRunner.getStatus(),
+            },
+        });
+    }
+
+    if (url.pathname === "/api/stocks/catalog/update") {
+        if (!requireMethod(req, res, ["POST"])) return;
         try {
-            const result = await runStockCatalogUpdate();
+            const result = await stockCatalogRunner.run("更新股票目录", () => runStockCatalogUpdate());
             return sendJson(res, 200, {
                 ...result,
                 status: getStockCatalogStatus(STOCK_TRACKING_DIR),
             });
         } catch (error) {
+            if (error instanceof TaskBusyError) {
+                return sendJson(res, 409, taskBusyPayload(error));
+            }
             return sendJson(res, 500, { error: error.message || "股票目录更新失败" });
+        }
+    }
+
+    if (url.pathname === "/api/stocks/prices/update") {
+        if (!requireMethod(req, res, ["POST"])) return;
+        try {
+            const body = await readJsonBody(req);
+            const label = body.stock_id ? `更新 ${String(body.stock_id).toUpperCase()} 行情` : "更新关注池行情";
+            const result = await stockPriceRunner.run(label, () => runStockPriceUpdate(body));
+            return sendJson(res, 200, {
+                ...result,
+                status: getStockPriceStatus(STOCK_TRACKING_DIR),
+            });
+        } catch (error) {
+            if (error instanceof TaskBusyError) {
+                return sendJson(res, 409, taskBusyPayload(error));
+            }
+            const { statusCode, payload } = getErrorPayload(error, "股票行情更新失败");
+            return sendJson(res, statusCode === 500 ? 500 : statusCode, {
+                error: payload.error || "股票行情更新失败",
+                ...payload,
+            });
+        }
+    }
+
+    if (url.pathname === "/api/fetch") {
+        if (!requireMethod(req, res, ["POST"])) return;
+        try {
+            const body = await readJsonBody(req);
+            if (!isWeChatArticleUrl(body.url)) {
+                return sendJson(res, 400, { error: "仅支持 mp.weixin.qq.com 文章链接" });
+            }
+
+            const result = await captureRunner.run("抓取公众号文章", () => captureArticleToLocal(body.url, { output: DEFAULT_OUTPUT_DIR }));
+            return sendJson(res, 200, {
+                ok: true,
+                article_id: result.meta.articleId,
+                title: result.meta.title,
+                author: cleanAuthorName(result.meta.author, result.meta.account, result.meta.publishTime),
+                account: result.meta.account,
+                publish_time: result.meta.publishTime,
+                source_url: result.meta.source,
+                article_dir: result.articleDir,
+                markdown_path: result.markdownPath,
+                offline_html_path: result.offlineHtmlPath,
+                diagnostics_path: result.diagnosticsPath,
+                diagnostics: result.diagnostics,
+                analysis_provider: result.analysis.analysis_provider,
+                analysis_model: result.analysis.analysis_model,
+            });
+        } catch (error) {
+            if (error instanceof TaskBusyError) {
+                return sendJson(res, 409, taskBusyPayload(error));
+            }
+            if (error instanceof HttpError) {
+                return sendJson(res, error.statusCode, { error: error.message, ...error.payload });
+            }
+            return sendJson(res, 500, {
+                error: error.userMessage || error.message || "抓取失败",
+                diagnostics: error.captureDiagnostics || null,
+            });
+        }
+    }
+
+    if (url.pathname === "/api/batch-fetch") {
+        if (!requireMethod(req, res, ["POST"])) return;
+        try {
+            const body = await readJsonBody(req);
+            const urls = Array.isArray(body.urls) ? body.urls : [];
+            if (urls.length === 0) return sendJson(res, 400, { error: "urls 数组为空" });
+            if (urls.length > 50) return sendJson(res, 400, { error: "单次最多 50 篇" });
+
+            const results = await captureRunner.run("批量抓取公众号文章", async () => {
+                const items = [];
+                for (const articleUrl of urls) {
+                    if (!isWeChatArticleUrl(articleUrl)) {
+                        items.push({ url: articleUrl, ok: false, error: "链接格式不支持" });
+                        continue;
+                    }
+                    try {
+                        const result = await captureArticleToLocal(articleUrl, { output: DEFAULT_OUTPUT_DIR });
+                        items.push({
+                            url: articleUrl,
+                            ok: true,
+                            article_id: result.meta.articleId,
+                            title: result.meta.title,
+                            diagnostics_path: result.diagnosticsPath,
+                            analysis_provider: result.analysis.analysis_provider,
+                            analysis_model: result.analysis.analysis_model,
+                        });
+                    } catch (err) {
+                        items.push({
+                            url: articleUrl,
+                            ok: false,
+                            error: err.userMessage || err.message || "抓取失败",
+                            diagnostics: err.captureDiagnostics || null,
+                        });
+                    }
+                }
+                return items;
+            });
+            return sendJson(res, 200, { results });
+        } catch (error) {
+            if (error instanceof TaskBusyError) {
+                return sendJson(res, 409, taskBusyPayload(error));
+            }
+            const { statusCode, payload } = getErrorPayload(error, "批量抓取失败");
+            return sendJson(res, statusCode, payload);
         }
     }
 
@@ -428,19 +525,6 @@ async function handleApi(req, res, url) {
 
     if (req.method === "GET" && url.pathname === "/api/stocks/prices/status") {
         return sendJson(res, 200, getStockPriceStatus(STOCK_TRACKING_DIR));
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/stocks/prices/update") {
-        try {
-            const body = await readJsonBody(req);
-            const result = await runStockPriceUpdate(body);
-            return sendJson(res, 200, {
-                ...result,
-                status: getStockPriceStatus(STOCK_TRACKING_DIR),
-            });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message || "股票行情更新失败" });
-        }
     }
 
     if (req.method === "GET" && url.pathname === "/api/stocks/review-queue") {
@@ -596,33 +680,6 @@ async function handleApi(req, res, url) {
         }
     }
 
-    if (req.method === "POST" && url.pathname === "/api/fetch") {
-        try {
-            const body = await readJsonBody(req);
-            if (!isWeChatArticleUrl(body.url)) {
-                return sendJson(res, 400, { error: "仅支持 mp.weixin.qq.com 文章链接" });
-            }
-
-            const result = await captureArticleToLocal(body.url, { output: DEFAULT_OUTPUT_DIR });
-            return sendJson(res, 200, {
-                ok: true,
-                article_id: result.meta.articleId,
-                title: result.meta.title,
-                author: cleanAuthorName(result.meta.author, result.meta.account, result.meta.publishTime),
-                account: result.meta.account,
-                publish_time: result.meta.publishTime,
-                source_url: result.meta.source,
-                article_dir: result.articleDir,
-                markdown_path: result.markdownPath,
-                offline_html_path: result.offlineHtmlPath,
-                analysis_provider: result.analysis.analysis_provider,
-                analysis_model: result.analysis.analysis_model,
-            });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message || "抓取失败" });
-        }
-    }
-
     if (req.method === "GET" && url.pathname === "/api/account-articles") {
         const sourceUrl = url.searchParams.get("source_url");
         if (!isWeChatArticleUrl(sourceUrl)) {
@@ -633,39 +690,6 @@ async function handleApi(req, res, url) {
             return sendJson(res, 200, result);
         } catch (error) {
             return sendJson(res, 500, { error: error.message || "获取文章列表失败" });
-        }
-    }
-
-    if (req.method === "POST" && url.pathname === "/api/batch-fetch") {
-        try {
-            const body = await readJsonBody(req);
-            const urls = Array.isArray(body.urls) ? body.urls : [];
-            if (urls.length === 0) return sendJson(res, 400, { error: "urls 数组为空" });
-            if (urls.length > 50) return sendJson(res, 400, { error: "单次最多 50 篇" });
-
-            const results = [];
-            for (const articleUrl of urls) {
-                if (!isWeChatArticleUrl(articleUrl)) {
-                    results.push({ url: articleUrl, ok: false, error: "链接格式不支持" });
-                    continue;
-                }
-                try {
-                    const result = await captureArticleToLocal(articleUrl, { output: DEFAULT_OUTPUT_DIR });
-                    results.push({
-                        url: articleUrl,
-                        ok: true,
-                        article_id: result.meta.articleId,
-                        title: result.meta.title,
-                        analysis_provider: result.analysis.analysis_provider,
-                        analysis_model: result.analysis.analysis_model,
-                    });
-                } catch (err) {
-                    results.push({ url: articleUrl, ok: false, error: err.message || "抓取失败" });
-                }
-            }
-            return sendJson(res, 200, { results });
-        } catch (error) {
-            return sendJson(res, 500, { error: error.message || "批量抓取失败" });
         }
     }
 
@@ -700,16 +724,44 @@ export const server = http.createServer(async (req, res) => {
         const requestedPath = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
         return serveFile(res, safeJoin(WEB_ROOT, requestedPath));
     } catch (error) {
+        if (error instanceof HttpError) {
+            sendJson(res, error.statusCode, { error: error.message, ...error.payload });
+            return;
+        }
         sendJson(res, 500, { error: error.message || "服务异常" });
     }
 });
 
 export function startServer() {
-    server.listen(PORT, HOST, () => {
-        console.log(`本地网页已启动: http://${HOST}:${PORT}`);
-        console.log(`文章数据目录: ${DEFAULT_OUTPUT_DIR}`);
-        console.log(`股票追踪目录: ${STOCK_TRACKING_DIR}`);
-    });
+    const maxPortAttempts = Number(process.env.PORT_MAX_ATTEMPTS || 10);
+    const initialPort = PORT;
+    let currentPort = initialPort;
+
+    const listen = () => {
+        const handleError = (error) => {
+            server.off("listening", handleListening);
+            if (error.code === "EADDRINUSE" && currentPort < initialPort + maxPortAttempts - 1) {
+                currentPort += 1;
+                listen();
+                return;
+            }
+            console.error(`本地网页启动失败: ${error.message}`);
+            process.exitCode = 1;
+        };
+
+        const handleListening = () => {
+            server.off("error", handleError);
+            console.log(`本地网页已启动: http://${HOST}:${currentPort}`);
+            console.log(`文章数据目录: ${DEFAULT_OUTPUT_DIR}`);
+            console.log(`股票追踪目录: ${STOCK_TRACKING_DIR}`);
+        };
+
+        server.once("error", handleError);
+        server.once("listening", handleListening);
+        server.listen(currentPort, HOST);
+    };
+
+    listen();
 }
 
 if (process.argv[1] === __filename) {

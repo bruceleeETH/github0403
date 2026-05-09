@@ -101,6 +101,29 @@ test("analyzeArticle uses DeepSeek JSON output when configured", async () => {
     assert.equal(analysis.usage.total_tokens, 180);
 });
 
+test("analyzeArticle allows overriding DeepSeek model", async () => {
+    let requestBody = null;
+    const analysis = await analyzeArticle(meta, "<p>半导体走强。</p>", {
+        deepseek: {
+            apiKey: "test-key",
+            model: "deepseek-custom",
+            fetchImpl: async (_url, options) => {
+                requestBody = JSON.parse(options.body);
+                return {
+                    ok: true,
+                    status: 200,
+                    text: async () => JSON.stringify({
+                        choices: [{ message: { content: JSON.stringify({ summary: "测试摘要" }) } }],
+                    }),
+                };
+            },
+        },
+    });
+
+    assert.equal(requestBody.model, "deepseek-custom");
+    assert.equal(analysis.analysis_model, "deepseek-custom");
+});
+
 test("analyzeArticle marks analysis as failed when DeepSeek fails", async () => {
     const analysis = await analyzeArticle(meta, "<p>市场反弹带来机会，改善正在出现。</p>", {
         deepseek: {

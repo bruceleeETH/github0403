@@ -144,7 +144,7 @@ export function findImagePayload(cache, imgUrlRaw) {
     return null;
 }
 
-export async function saveImagesFromCapture(images, articleDir, imageCache, requestHeaders) {
+export async function saveImagesFromCapture(images, articleDir, imageCache, requestHeaders, options = {}) {
     const imgDir = path.join(articleDir, "images");
     ensureDir(imgDir);
 
@@ -153,6 +153,7 @@ export async function saveImagesFromCapture(images, articleDir, imageCache, requ
     }
 
     const urlToLocal = new Map();
+    const diagnostics = options.diagnostics || null;
     let idx = 0;
 
     for (const imgUrlRaw of images) {
@@ -161,10 +162,17 @@ export async function saveImagesFromCapture(images, articleDir, imageCache, requ
 
         try {
             let payload = findImagePayload(imageCache, imgUrl);
+            let source = payload ? "browser-cache" : "download";
             if (!payload) {
                 payload = await downloadImageWithHeaders(imgUrl, requestHeaders);
             }
-            if (!payload) continue;
+            if (!payload) {
+                diagnostics?.images.failed.push({
+                    url: imgUrl,
+                    reason: "图片未能从浏览器缓存或 HTTP 下载中读取",
+                });
+                continue;
+            }
 
             const ext = getExtFromContentType(payload.contentType || "");
             const fileName = `img_${String(idx).padStart(3, "0")}${ext}`;
@@ -172,12 +180,22 @@ export async function saveImagesFromCapture(images, articleDir, imageCache, requ
             const localAbsPath = path.join(articleDir, localRelPath);
 
             fs.writeFileSync(localAbsPath, payload.buffer);
+            diagnostics?.images.saved.push({
+                url: imgUrl,
+                file: localRelPath,
+                content_type: payload.contentType || "",
+                bytes: payload.buffer.length,
+                source,
+            });
             urlToLocal.set(imgUrl, localRelPath);
             const noQuery = imgUrl.split("?")[0];
             urlToLocal.set(noQuery, localRelPath);
             idx += 1;
-        } catch {
-            // Keep going when an image fails to download.
+        } catch (error) {
+            diagnostics?.images.failed.push({
+                url: imgUrl,
+                reason: error.message || "图片保存失败",
+            });
         }
     }
 
@@ -198,4 +216,3 @@ export function replaceImageUrlsInHtml(contentHtml, urlToLocal) {
 
     return html;
 }
-

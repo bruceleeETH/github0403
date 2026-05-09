@@ -215,7 +215,7 @@ export function getDeepSeekConfig(options = {}) {
     return {
         apiKey: hasApiKeyOption ? options.apiKey : (process.env.DEEPSEEK_API_KEY || ""),
         baseUrl: options.baseUrl || process.env.DEEPSEEK_BASE_URL || DEFAULT_BASE_URL,
-        model: DEFAULT_MODEL,
+        model: options.model || process.env.DEEPSEEK_MODEL || DEFAULT_MODEL,
         maxInputChars: Number(options.maxInputChars || process.env.DEEPSEEK_ANALYSIS_MAX_CHARS || DEFAULT_MAX_INPUT_CHARS),
         maxTokens: Number(options.maxTokens || process.env.DEEPSEEK_MAX_TOKENS || DEFAULT_MAX_TOKENS),
         timeoutMs: Number(options.timeoutMs || process.env.DEEPSEEK_API_TIMEOUT_MS || DEFAULT_TIMEOUT_MS),

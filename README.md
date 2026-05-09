@@ -2,23 +2,24 @@
 
 将微信公众号文章保存到本地，并生成适合 agent 分析的 Markdown、JSON 分析结果和离线 HTML，方便按作者持续跟踪观点变化。
 
-当前提供三种入口：
+当前优先维护 Web 入口和 Puppeteer 抓取链路：
 
-- Python 轻量方案：速度快，适合正文批量保存
-- Puppeteer 方案：更接近真实浏览器访问，适合作为主抓取链路
-- 本地网页应用：在浏览器里输入文章链接，查看文章、作者和基础分析
+- 本地网页应用：在浏览器里输入文章链接，查看文章、作者、模型分析和股票追踪
+- Puppeteer CLI：保留为命令行抓取入口，和 Web 使用同一套核心模块
+
+Python 轻量文章保存方案已移除；Python 仍用于 Web 内的股票目录和行情更新脚本。Tauri 桌面端开发暂时搁置，当前全力维护 Web 版本。
 
 ## 安装
 
 ```bash
-pip install -r requirements.txt
 npm install
 ```
 
-如果你只想使用其中一个方案：
+如需使用股票目录和行情更新，额外安装 Python 依赖：
 
-- 只用 Python：执行 `pip install -r requirements.txt`
-- 只用 Puppeteer：执行 `npm install`
+```bash
+pip install -r requirements.txt
+```
 
 ## 本地网页应用
 
@@ -29,7 +30,7 @@ DEEPSEEK_API_KEY=sk-xxxxx
 ```
 
 `.env.local` 已被 git 忽略。未配置 key 或 API 调用失败时，应用会标记为“未完成模型分析”，不再展示旧版规则分析。
-启用后，文章正文会发送到 DeepSeek API；当前 DeepSeek 分析模型为 `deepseek-v4-flash`。
+启用后，文章正文会发送到 DeepSeek API；默认 DeepSeek 分析模型为 `deepseek-v4-flash`，可用 `DEEPSEEK_MODEL` 覆盖。
 
 ```bash
 npm start
@@ -41,20 +42,24 @@ npm start
 http://127.0.0.1:4318
 ```
 
+如果 4318 已被占用，服务会自动尝试后续端口；以终端输出的地址为准。
+
 当前网页应用支持：
 
 - 输入公众号文章 URL 并抓取到本地
 - 自动生成离线 HTML、Markdown、analysis.json
+- 自动生成 `capture_diagnostics.json`，记录页面加载、正文提取、图片保存和截图状态
 - 在每篇文章下保存独立的 `personal_note.md`，用于记录自己的感悟和理解
-- 配置 DeepSeek API key 后，用 `deepseek-v4-flash` 提炼核心观点、板块、个股和市场情绪
+- 配置 DeepSeek API key 后，用当前配置模型提炼核心观点、板块、个股和市场情绪
 - 旧文章未完成模型分析时，可在详情页点击“立刻分析”，直接用本地正文补生成模型分析
 - 展示文章列表和作者列表
 - 按作者汇总文章数量、关键词和情绪分布
-- 维护本地股票池，支持股票增删改查、测试收盘价、日 / 五日 / 周表现排序和关联文章查看
+- 维护本地股票池，支持股票增删改查、真实行情更新、日 / 五日 / 周表现排序和关联文章查看
+- 抓取、批量抓取、股票目录更新和行情更新会串行执行，避免重复点击造成进程和文件写入冲突
 
 ## 使用方法
 
-### 方案 A: Puppeteer（你当前优先使用）
+### Puppeteer CLI
 
 ```bash
 # 安装 Node 依赖
@@ -80,44 +85,6 @@ Puppeteer 方案输出内容包括：
 - `comment_requests.json`：评论相关网络请求观测日志（用于后续排查评论抓取）
 - `articles.jsonl`：全局索引，便于按作者和时间做轻量检索
 
-### 方案 B: Python（轻量）
-
-### 保存单篇文章  
-
-```bash
-# 同时保存为 HTML 和 Markdown（默认）
-python save_wechat_article.py "https://mp.weixin.qq.com/s/xxxxx"
-
-# 只保存为 Markdown
-python save_wechat_article.py "https://mp.weixin.qq.com/s/xxxxx" --format md
-
-# 只保存为 HTML
-python save_wechat_article.py "https://mp.weixin.qq.com/s/xxxxx" --format html
-
-# 不下载图片
-python save_wechat_article.py "https://mp.weixin.qq.com/s/xxxxx" --no-images
-
-# 指定输出目录
-python save_wechat_article.py "https://mp.weixin.qq.com/s/xxxxx" --output ~/my_articles
-```
-
-### 批量保存
-
-创建一个 `urls.txt` 文件，每行放一个文章链接（`#` 开头的行为注释）：
-
-```
-# 我收藏的文章
-https://mp.weixin.qq.com/s/article1
-https://mp.weixin.qq.com/s/article2
-https://mp.weixin.qq.com/s/article3
-```
-
-然后运行：
-
-```bash
-python save_wechat_article.py --batch urls.txt
-```
-
 ## 输出结构
 
 ```
@@ -134,6 +101,7 @@ wechat_articles_puppeteer/
         ├── raw_page.html
         ├── preview.png
         ├── comment_requests.json
+        ├── capture_diagnostics.json
         └── images/
             ├── img_000.webp
             ├── img_001.webp
@@ -148,7 +116,7 @@ stock_tracking/
 └── daily_prices.jsonl
 ```
 
-当前价格使用测试数据生成；后续接入真实行情接口时，可替换 `daily_prices.jsonl` 的写入来源。
+行情更新只拉取关注池股票，A 股优先使用 AkShare，失败时会尝试腾讯备用源。
 
 ## 获取文章链接的方法
 
@@ -160,6 +128,6 @@ stock_tracking/
 
 - 仅支持 `mp.weixin.qq.com` 域名的公众号文章
 - 部分文章可能设置了访问限制，需要登录才能查看
-- 批量下载时自动添加 2 秒间隔，避免请求过于频繁
+- 批量抓取会串行执行，避免请求过于频繁
 - 图片会自动下载到本地并替换文档中的远程链接
-- 当前基础分析为规则式结果，适合做作者跟踪和整理，不等同于深度研究结论
+- 未配置模型时会保留待分析状态，不再使用旧版规则分析结果冒充模型结论
