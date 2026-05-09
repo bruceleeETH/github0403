@@ -534,6 +534,21 @@ select.text-input {
     color: var(--danger);
 }
 
+.stock-price-update-detail {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.6;
+}
+
+.stock-price-update-detail[data-tone="warning"] {
+    color: var(--warning);
+}
+
+.stock-price-update-detail[data-tone="danger"] {
+    color: var(--danger);
+}
+
 .queue-list {
     margin-top: 12px;
 }

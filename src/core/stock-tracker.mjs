@@ -4,6 +4,7 @@ import { ensureDir } from "../storage/paths.mjs";
 
 export const STOCKS_FILE_NAME = "stocks.jsonl";
 export const DAILY_PRICES_FILE_NAME = "daily_prices.jsonl";
+export const STOCK_PRICE_META_FILE_NAME = "price_update_meta.json";
 export const STOCK_NOTES_DIR_NAME = "notes";
 export const STOCK_CATALOG_DIR_NAME = "catalog";
 export const STOCK_UNIVERSE_FILE_NAME = "stock_universe.jsonl";
@@ -18,50 +19,6 @@ const REVIEW_THRESHOLDS = Object.freeze({
     fiveDayAbsMove: 12,
     articleMentionCount: 2,
 });
-const TRADE_DATES = [
-    "2026-04-24",
-    "2026-04-27",
-    "2026-04-28",
-    "2026-04-29",
-    "2026-04-30",
-    "2026-05-04",
-    "2026-05-05",
-    "2026-05-06",
-    "2026-05-07",
-    "2026-05-08",
-];
-
-export const SAMPLE_STOCKS = Object.freeze([
-    {
-        code: "688981",
-        exchange: "SH",
-        name: "中芯国际",
-        tags: ["半导体", "国产替代"],
-        watch_reason: "多篇文章提到半导体景气修复，先纳入核心观察池。",
-    },
-    {
-        code: "300308",
-        exchange: "SZ",
-        name: "中际旭创",
-        tags: ["CPO", "光模块"],
-        watch_reason: "文章里反复出现光模块和 CPO，是观察 AI 产业链强度的锚点。",
-    },
-    {
-        code: "002617",
-        exchange: "SZ",
-        name: "露笑科技",
-        tags: ["碳化硅", "半导体"],
-        watch_reason: "适合作为半导体扩散方向的弹性样本。",
-    },
-    {
-        code: "600703",
-        exchange: "SH",
-        name: "三安光电",
-        tags: ["化合物半导体", "LED"],
-        watch_reason: "用于跟踪化合物半导体方向的持续性。",
-    },
-]);
-
 function nowIso(options = {}) {
     return (options.now || new Date()).toISOString();
 }
@@ -97,6 +54,10 @@ function pricePath(dataDir) {
     return path.join(dataDir, DAILY_PRICES_FILE_NAME);
 }
 
+function priceMetaPath(dataDir) {
+    return path.join(dataDir, STOCK_PRICE_META_FILE_NAME);
+}
+
 function catalogDir(dataDir) {
     return path.join(dataDir, STOCK_CATALOG_DIR_NAME);
 }
@@ -116,10 +77,6 @@ function notesDir(dataDir) {
 function stockNotePath(dataDir, stockId) {
     const safeId = String(stockId || "").toUpperCase().replace(/[^A-Z0-9.]/g, "_");
     return path.join(notesDir(dataDir), `${safeId}.md`);
-}
-
-function hashText(value) {
-    return [...String(value || "")].reduce((sum, char) => sum + char.charCodeAt(0), 0);
 }
 
 function parseStockInput(input = {}) {
@@ -458,10 +415,17 @@ export function writeStockNote(dataDir, stock, content, options = {}) {
 
 function normalizePriceRecord(record) {
     const stock_id = String(record.stock_id || buildStockId(record.exchange, record.code)).trim().toUpperCase();
-    const close = Number(record.close);
-    const prevClose = Number(record.prev_close);
+    const numberOrNaN = (value) => (
+        value === null || value === undefined || value === "" ? Number.NaN : Number(value)
+    );
+    const close = numberOrNaN(record.close);
+    const prevClose = numberOrNaN(record.prev_close);
     if (!stock_id || !String(record.trade_date || "").trim()) throw new Error("价格记录缺少股票或交易日");
     if (!Number.isFinite(close)) throw new Error("价格记录收盘价无效");
+    const numericOrNull = (value, digits = 2) => {
+        const number = Number(value);
+        return Number.isFinite(number) ? Number(number.toFixed(digits)) : null;
+    };
     const pctChange = Number.isFinite(Number(record.pct_change))
         ? Number(record.pct_change)
         : (Number.isFinite(close) && Number.isFinite(prevClose) && prevClose !== 0
@@ -470,31 +434,21 @@ function normalizePriceRecord(record) {
     return {
         stock_id,
         trade_date: String(record.trade_date || "").slice(0, 10),
+        open: numericOrNull(record.open),
         close: Number(close.toFixed(2)),
+        high: numericOrNull(record.high),
+        low: numericOrNull(record.low),
         prev_close: Number.isFinite(prevClose) ? Number(prevClose.toFixed(2)) : null,
+        change_amount: numericOrNull(record.change_amount),
         pct_change: pctChange === null ? null : Number(pctChange.toFixed(2)),
-        source: record.source || "test",
+        volume: numericOrNull(record.volume, 0),
+        amount: numericOrNull(record.amount, 2),
+        amplitude: numericOrNull(record.amplitude),
+        turnover: numericOrNull(record.turnover),
+        adjust: record.adjust || "qfq",
+        source: record.source || "akshare",
         captured_at: record.captured_at || nowIso(),
     };
-}
-
-function generateTestPrices(stock, options = {}) {
-    const seed = hashText(stock.stock_id);
-    let close = Number((18 + (seed % 120) + ((seed % 17) / 10)).toFixed(2));
-    return TRADE_DATES.map((tradeDate, index) => {
-        const prevClose = close;
-        const wave = Math.sin((seed + index) * 0.72) * 0.028;
-        const drift = ((seed % 7) - 3) * 0.0025;
-        close = Number(Math.max(2, close * (1 + wave + drift)).toFixed(2));
-        return normalizePriceRecord({
-            stock_id: stock.stock_id,
-            trade_date: tradeDate,
-            close,
-            prev_close: index === 0 ? close : prevClose,
-            source: options.source || "test",
-            captured_at: options.captured_at || "2026-05-08T15:30:00.000Z",
-        });
-    });
 }
 
 function ensureStockDataStore(dataDir, options = {}) {
@@ -513,7 +467,9 @@ export function writeStocks(dataDir, stocks, options = {}) {
 
 export function readDailyPrices(dataDir, options = {}) {
     ensureStockDataStore(dataDir, options);
-    return readJsonl(pricePath(dataDir)).map(normalizePriceRecord);
+    return readJsonl(pricePath(dataDir))
+        .map(normalizePriceRecord)
+        .filter((price) => options.includeTestPrices || price.source !== "test");
 }
 
 export function writeDailyPrices(dataDir, prices, options = {}) {
@@ -521,12 +477,49 @@ export function writeDailyPrices(dataDir, prices, options = {}) {
     writeJsonl(pricePath(dataDir), prices.map(normalizePriceRecord));
 }
 
-function seedPricesIfMissing(dataDir, stock, options = {}) {
+export function upsertDailyPrices(dataDir, prices, options = {}) {
+    const existing = readDailyPrices(dataDir, options);
+    const byKey = new Map();
+    for (const price of existing) {
+        byKey.set(`${price.stock_id}|${price.trade_date}|${price.adjust || "qfq"}`, price);
+    }
+    for (const price of prices.map(normalizePriceRecord)) {
+        byKey.set(`${price.stock_id}|${price.trade_date}|${price.adjust || "qfq"}`, price);
+    }
+    const merged = [...byKey.values()].sort((left, right) => (
+        left.stock_id.localeCompare(right.stock_id) ||
+        left.trade_date.localeCompare(right.trade_date) ||
+        String(left.adjust || "").localeCompare(String(right.adjust || ""))
+    ));
+    writeDailyPrices(dataDir, merged, options);
+    return merged;
+}
+
+export function getStockPriceStatus(dataDir, options = {}) {
+    ensureStockDataStore(dataDir, options);
     const prices = readDailyPrices(dataDir, options);
-    if (prices.some((item) => item.stock_id === stock.stock_id)) return prices;
-    const nextPrices = [...prices, ...generateTestPrices(stock)];
-    writeDailyPrices(dataDir, nextPrices, options);
-    return nextPrices;
+    const metaPath = priceMetaPath(dataDir);
+    const meta = fs.existsSync(metaPath)
+        ? JSON.parse(fs.readFileSync(metaPath, "utf-8"))
+        : {};
+    const stockIds = new Set(prices.map((price) => price.stock_id));
+    const latestTradeDate = prices.reduce((latest, price) => (
+        !latest || price.trade_date > latest ? price.trade_date : latest
+    ), "");
+    const latestCapturedAt = prices.reduce((latest, price) => (
+        !latest || String(price.captured_at || "") > latest ? String(price.captured_at || "") : latest
+    ), "");
+    return {
+        exists: fs.existsSync(pricePath(dataDir)),
+        count: prices.length,
+        stock_count: stockIds.size,
+        latest_trade_date: latestTradeDate,
+        updated_at: meta.updated_at || latestCapturedAt,
+        source: meta.source || (prices.find((price) => price.source)?.source || ""),
+        adjust: meta.adjust || (prices.find((price) => price.adjust)?.adjust || "qfq"),
+        file: path.relative(dataDir, pricePath(dataDir)),
+        last_result: meta.last_result || null,
+    };
 }
 
 export function addStock(dataDir, input, options = {}) {
@@ -547,7 +540,6 @@ export function addStock(dataDir, input, options = {}) {
             : stock)
         : [...stocks, nextStock];
     writeStocks(dataDir, nextStocks, options);
-    seedPricesIfMissing(dataDir, nextStock, options);
     return nextStocks.find((stock) => stock.stock_id === nextStock.stock_id);
 }
 

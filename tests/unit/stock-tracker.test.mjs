@@ -11,12 +11,15 @@ import {
     buildStockPerformance,
     buildStockNoteTemplate,
     getStockCatalogStatus,
+    getStockPriceStatus,
     loadStockDashboard,
     loadStockDetail,
     readStockCatalog,
+    readDailyPrices,
     readStockNote,
     searchStockCatalog,
     updateStock,
+    upsertDailyPrices,
     writeDailyPrices,
     writeStockCatalog,
     writeStockNote,
@@ -63,7 +66,7 @@ test("stock catalog stores A-share records and searches by name or code", (t) =>
     assert.equal(searchStockCatalog(dir, "AAPL", { seed: false })[0].stock_id, "US.AAPL");
 });
 
-test("addStock normalizes identifiers and seeds test prices", (t) => {
+test("addStock normalizes identifiers without creating market prices", (t) => {
     const dir = makeTempDir(t);
     seedCatalog(dir);
     const stock = addStock(dir, {
@@ -81,8 +84,59 @@ test("addStock normalizes identifiers and seeds test prices", (t) => {
 
     const detail = loadStockDetail(dir, "SH.688981", { seed: false });
     assert.equal(detail.stock.name, "中芯国际");
-    assert.equal(detail.prices.length, 10);
-    assert.equal(detail.prices[0].trade_date, "2026-05-08");
+    assert.equal(detail.prices.length, 0);
+});
+
+test("daily prices keep real quote fields and upsert by stock/date/adjust", (t) => {
+    const dir = makeTempDir(t);
+    seedCatalog(dir);
+    const stock = addStock(dir, { stock_id: "SH.688981" }, { seed: false });
+
+    upsertDailyPrices(dir, [{
+        stock_id: stock.stock_id,
+        trade_date: "2026-05-07",
+        open: 82.1,
+        close: 83.2,
+        high: 84.3,
+        low: 81.8,
+        volume: 1234567,
+        amount: 987654321,
+        pct_change: 1.23,
+        change_amount: 1.01,
+        turnover: 0.88,
+        adjust: "qfq",
+        source: "akshare.stock_zh_a_hist",
+        captured_at: "2026-05-08T10:00:00.000Z",
+    }], { seed: false });
+    upsertDailyPrices(dir, [{
+        stock_id: stock.stock_id,
+        trade_date: "2026-05-07",
+        close: 84.2,
+        pct_change: 2.44,
+        adjust: "qfq",
+        source: "akshare.stock_zh_a_hist",
+        captured_at: "2026-05-08T11:00:00.000Z",
+    }, {
+        stock_id: stock.stock_id,
+        trade_date: "2026-05-08",
+        close: 85.2,
+        prev_close: 84.2,
+        adjust: "qfq",
+        source: "akshare.stock_zh_a_hist",
+        captured_at: "2026-05-08T11:00:00.000Z",
+    }], { seed: false });
+
+    const detail = loadStockDetail(dir, stock.stock_id, { seed: false });
+    assert.equal(detail.prices.length, 2);
+    assert.equal(detail.prices[1].close, 84.2);
+    assert.equal(detail.prices[1].source, "akshare.stock_zh_a_hist");
+    assert.equal(detail.performance.day.pct_change, 1.19);
+
+    const status = getStockPriceStatus(dir, { seed: false });
+    assert.equal(status.count, 2);
+    assert.equal(status.stock_count, 1);
+    assert.equal(status.latest_trade_date, "2026-05-08");
+    assert.equal(status.adjust, "qfq");
 });
 
 test("stock store starts empty until a catalog stock is added", (t) => {
@@ -123,30 +177,39 @@ test("loadStockDashboard ranks day, five-day, and week performance", (t) => {
     const alpha = addStock(dir, { stock_id: "SH.600000" }, { seed: false });
     const beta = addStock(dir, { stock_id: "SZ.000001" }, { seed: false });
     writeDailyPrices(dir, [
-        { stock_id: alpha.stock_id, trade_date: "2026-05-01", close: 10, prev_close: 10 },
-        { stock_id: alpha.stock_id, trade_date: "2026-05-04", close: 11, prev_close: 10 },
-        { stock_id: alpha.stock_id, trade_date: "2026-05-05", close: 12, prev_close: 11 },
-        { stock_id: alpha.stock_id, trade_date: "2026-05-06", close: 13, prev_close: 12 },
-        { stock_id: alpha.stock_id, trade_date: "2026-05-07", close: 14, prev_close: 13 },
-        { stock_id: alpha.stock_id, trade_date: "2026-05-08", close: 15, prev_close: 14 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-01", close: 20, prev_close: 20 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-04", close: 20, prev_close: 20 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-05", close: 19, prev_close: 20 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-06", close: 18, prev_close: 19 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-07", close: 17, prev_close: 18 },
-        { stock_id: beta.stock_id, trade_date: "2026-05-08", close: 16, prev_close: 17 },
+        { stock_id: alpha.stock_id, trade_date: "2026-04-24", close: 9, prev_close: 9 },
+        { stock_id: alpha.stock_id, trade_date: "2026-04-27", close: 10, prev_close: 9 },
+        { stock_id: alpha.stock_id, trade_date: "2026-04-28", close: 12, prev_close: 10 },
+        { stock_id: alpha.stock_id, trade_date: "2026-04-29", close: 13, prev_close: 12 },
+        { stock_id: alpha.stock_id, trade_date: "2026-04-30", close: 14, prev_close: 13 },
+        { stock_id: alpha.stock_id, trade_date: "2026-05-05", close: 99, prev_close: 14, source: "test" },
+        { stock_id: alpha.stock_id, trade_date: "2026-05-06", close: 15, prev_close: 14 },
+        { stock_id: alpha.stock_id, trade_date: "2026-05-07", close: 16, prev_close: 15 },
+        { stock_id: alpha.stock_id, trade_date: "2026-05-08", close: 18, prev_close: 16 },
+        { stock_id: beta.stock_id, trade_date: "2026-04-24", close: 21, prev_close: 21 },
+        { stock_id: beta.stock_id, trade_date: "2026-04-27", close: 20, prev_close: 21 },
+        { stock_id: beta.stock_id, trade_date: "2026-04-28", close: 20, prev_close: 20 },
+        { stock_id: beta.stock_id, trade_date: "2026-04-29", close: 19, prev_close: 20 },
+        { stock_id: beta.stock_id, trade_date: "2026-04-30", close: 18, prev_close: 19 },
+        { stock_id: beta.stock_id, trade_date: "2026-05-05", close: 99, prev_close: 18, source: "test" },
+        { stock_id: beta.stock_id, trade_date: "2026-05-06", close: 17, prev_close: 18 },
+        { stock_id: beta.stock_id, trade_date: "2026-05-07", close: 16, prev_close: 17 },
+        { stock_id: beta.stock_id, trade_date: "2026-05-08", close: 15, prev_close: 16 },
     ], { seed: false });
+
+    assert.equal(readDailyPrices(dir, { seed: false }).some((price) => price.trade_date === "2026-05-05"), false);
 
     const day = loadStockDashboard(dir, { range: "day", order: "desc", seed: false });
     assert.equal(day.rankings[0].stock.stock_id, buildStockId("SH", "600000"));
-    assert.equal(day.rankings[0].pct_change, 7.14);
+    assert.equal(day.rankings[0].pct_change, 12.5);
 
     const fiveDay = loadStockDashboard(dir, { range: "5d", order: "desc", seed: false });
     assert.equal(fiveDay.rankings[0].pct_change, 50);
+    assert.equal(fiveDay.rankings[0].reference_trade_date, "2026-04-28");
 
     const week = buildStockPerformance(alpha, loadStockDetail(dir, alpha.stock_id, { seed: false }).prices, "week");
-    assert.equal(week.reference_trade_date, "2026-05-04");
-    assert.equal(week.pct_change, 36.36);
+    assert.equal(week.reference_trade_date, "2026-05-06");
+    assert.equal(week.pct_change, 20);
 });
 
 test("stock notes return a markdown template and persist saved content", (t) => {

@@ -16,6 +16,7 @@ import {
     archiveStock,
     buildReviewQueue,
     getStockCatalogStatus,
+    getStockPriceStatus,
     loadStockDashboard,
     loadStockDetail,
     readDailyPrices,
@@ -35,7 +36,8 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const WEB_ROOT = path.join(PROJECT_ROOT, "webapp");
 const STOCK_CATALOG_UPDATE_SCRIPT = path.join(PROJECT_ROOT, "scripts", "update_stock_catalog.py");
-const STOCK_CATALOG_VENV_PYTHON = path.join(PROJECT_ROOT, ".venv", "bin", "python");
+const STOCK_PRICE_UPDATE_SCRIPT = path.join(PROJECT_ROOT, "scripts", "update_stock_prices.py");
+const PROJECT_VENV_PYTHON = path.join(PROJECT_ROOT, ".venv", "bin", "python");
 const HOST = "127.0.0.1";
 const PORT = Number(process.env.PORT || 4318);
 const execFileAsync = promisify(execFile);
@@ -316,7 +318,7 @@ function buildArticleStockMentions(records, stocks) {
 
 async function runStockCatalogUpdate() {
     try {
-        const pythonBin = process.env.STOCK_CATALOG_PYTHON || (fs.existsSync(STOCK_CATALOG_VENV_PYTHON) ? STOCK_CATALOG_VENV_PYTHON : "python3");
+        const pythonBin = process.env.STOCK_CATALOG_PYTHON || (fs.existsSync(PROJECT_VENV_PYTHON) ? PROJECT_VENV_PYTHON : "python3");
         const { stdout } = await execFileAsync(pythonBin, [
             STOCK_CATALOG_UPDATE_SCRIPT,
             "--data-dir",
@@ -333,6 +335,33 @@ async function runStockCatalogUpdate() {
             throw new Error("未检测到 akshare，请先运行：pip install akshare");
         }
         throw new Error(stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" / ") || "股票目录更新失败");
+    }
+}
+
+async function runStockPriceUpdate(options = {}) {
+    try {
+        const pythonBin = process.env.STOCK_PRICE_PYTHON || (fs.existsSync(PROJECT_VENV_PYTHON) ? PROJECT_VENV_PYTHON : "python3");
+        const args = [
+            STOCK_PRICE_UPDATE_SCRIPT,
+            "--data-dir",
+            STOCK_TRACKING_DIR,
+        ];
+        if (options.stock_id) args.push("--stock-id", String(options.stock_id).toUpperCase());
+        if (options.start_date) args.push("--start-date", String(options.start_date));
+        if (options.end_date) args.push("--end-date", String(options.end_date));
+        if (options.adjust !== undefined) args.push("--adjust", String(options.adjust));
+        const { stdout } = await execFileAsync(pythonBin, args, {
+            cwd: PROJECT_ROOT,
+            maxBuffer: 20 * 1024 * 1024,
+        });
+        const jsonLine = String(stdout || "").split(/\r?\n/).reverse().find((line) => line.trim().startsWith("{"));
+        return jsonLine ? JSON.parse(jsonLine) : {};
+    } catch (error) {
+        const stderr = String(error.stderr || error.message || "");
+        if (stderr.includes("No module named") && stderr.includes("akshare")) {
+            throw new Error("未检测到 akshare，请先安装项目依赖：.venv/bin/python -m pip install -r requirements.txt");
+        }
+        throw new Error(stderr.split(/\r?\n/).filter(Boolean).slice(-3).join(" / ") || "股票行情更新失败");
     }
 }
 
@@ -395,6 +424,23 @@ async function handleApi(req, res, url) {
             items: searchStockCatalog(STOCK_TRACKING_DIR, query, { limit: Number(url.searchParams.get("limit") || 20) }),
             status: getStockCatalogStatus(STOCK_TRACKING_DIR),
         });
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/stocks/prices/status") {
+        return sendJson(res, 200, getStockPriceStatus(STOCK_TRACKING_DIR));
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/stocks/prices/update") {
+        try {
+            const body = await readJsonBody(req);
+            const result = await runStockPriceUpdate(body);
+            return sendJson(res, 200, {
+                ...result,
+                status: getStockPriceStatus(STOCK_TRACKING_DIR),
+            });
+        } catch (error) {
+            return sendJson(res, 500, { error: error.message || "股票行情更新失败" });
+        }
     }
 
     if (req.method === "GET" && url.pathname === "/api/stocks/review-queue") {

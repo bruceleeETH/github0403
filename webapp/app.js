@@ -18,6 +18,7 @@ const state = {
   stockDashboard: { stocks: [], rankings: [], summary: {} },
   stockReviewQueue: [],
   stockCatalogStatus: { exists: false, count: 0, markets: {} },
+  stockPriceStatus: { exists: false, count: 0, stock_count: 0 },
   stockCandidate: null,
   stockCandidates: [],
   queue: [],
@@ -69,6 +70,10 @@ const els = {
   stockRangeTabs: document.querySelectorAll("[data-stock-range]"),
   stockSortToggle: document.querySelector("#stock-sort-toggle"),
   stockRankList: document.querySelector("#stock-rank-list"),
+  stockPriceStatus: document.querySelector("#stock-price-status"),
+  updateStockPricesBtn: document.querySelector("#update-stock-prices-btn"),
+  stockPriceUpdateStatus: document.querySelector("#stock-price-update-status"),
+  stockPriceUpdateDetail: document.querySelector("#stock-price-update-detail"),
   stockReviewCount: document.querySelector("#stock-review-count"),
   stockReviewList: document.querySelector("#stock-review-list"),
   batchLinks: document.querySelector("#batch-links"),
@@ -117,7 +122,11 @@ async function fetchJson(url, options) {
     if (!resp.ok) throw new Error(text || `HTTP ${resp.status}`);
     throw new Error(`服务返回了非 JSON 响应：${text.slice(0, 120)}`);
   }
-  if (!resp.ok) throw new Error(data.error || "请求失败");
+  if (!resp.ok) {
+    const error = new Error(data.error || "请求失败");
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 
@@ -222,6 +231,75 @@ function formatCatalogStatus(status = {}) {
 function renderCatalogStatus() {
   if (!els.stockCatalogStatus) return;
   els.stockCatalogStatus.textContent = formatCatalogStatus(state.stockCatalogStatus);
+}
+
+function formatPriceStatus(status = {}) {
+  if (!status.exists || !status.count) return "尚未更新真实行情。只会拉取关注池股票。";
+  const latest = status.latest_trade_date || "暂无交易日";
+  const updated = status.updated_at ? ` · 更新 ${formatStockDate(status.updated_at)}` : "";
+  const last = status.last_result || {};
+  const lastNote = last.failed ? ` · 上次失败 ${last.failed} 只` : (last.fallback_count ? ` · 备用源 ${last.fallback_count} 只` : "");
+  return `${status.stock_count || 0} 只 / ${status.count || 0} 条 · 最新交易日 ${latest}${updated}${lastNote}`;
+}
+
+function priceProviderLabel(source) {
+  return ({
+    "akshare.stock_zh_a_hist": "AkShare",
+    "akshare.stock_hk_hist": "AkShare",
+    "akshare.stock_us_hist": "AkShare",
+    "tencent.fqkline": "腾讯备用源",
+  })[source] || source || "未知源";
+}
+
+function compactErrorText(text) {
+  return String(text || "")
+    .replace(/\s+/g, " ")
+    .replace(/HTTPSConnectionPool\([^)]*\): /g, "")
+    .replace(/Max retries exceeded with url: .*?\(Caused by /g, "")
+    .replace(/\)+$/g, "")
+    .slice(0, 120);
+}
+
+function formatPriceUpdateDetail(result = {}) {
+  const fallbackItems = Array.isArray(result.items)
+    ? result.items.filter((item) => item.used_fallback)
+    : [];
+  const failures = Array.isArray(result.failures) ? result.failures : [];
+  const parts = [];
+  if (fallbackItems.length) {
+    const names = fallbackItems.slice(0, 3).map((item) => item.name || item.stock_id).join("、");
+    parts.push(`已自动切换备用源：${names}${fallbackItems.length > 3 ? " 等" : ""}`);
+  }
+  if (failures.length) {
+    const first = failures[0];
+    const providerErrors = Array.isArray(first.provider_errors) ? first.provider_errors : [];
+    const providerDetail = providerErrors.length
+      ? providerErrors.map((item) => `${priceProviderLabel(item.provider)} ${compactErrorText(item.error)}`).join("；")
+      : compactErrorText(first.error);
+    parts.push(`${first.name || first.stock_id} 失败：${first.hint || providerDetail}`);
+    if (providerDetail && first.hint) parts.push(`接口明细：${providerDetail}`);
+    if (failures.length > 1) parts.push(`其余 ${failures.length - 1} 只也未更新`);
+  }
+  return parts.join("。");
+}
+
+function renderPriceUpdateDetail(result = null, tone = "") {
+  if (!els.stockPriceUpdateDetail) return;
+  const text = result ? formatPriceUpdateDetail(result) : "";
+  els.stockPriceUpdateDetail.textContent = text;
+  els.stockPriceUpdateDetail.dataset.tone = tone || "";
+  els.stockPriceUpdateDetail.hidden = !text;
+}
+
+function renderPriceStatus() {
+  if (!els.stockPriceStatus) return;
+  els.stockPriceStatus.textContent = formatPriceStatus(state.stockPriceStatus);
+  const last = state.stockPriceStatus?.last_result;
+  if (last?.failed || last?.fallback_count) {
+    renderPriceUpdateDetail(last, last.failed ? "warning" : "success");
+  } else {
+    renderPriceUpdateDetail(null);
+  }
 }
 
 function parseStockLabel(label) {
@@ -479,6 +557,7 @@ function renderStockRankings() {
 
 function renderStocks() {
   renderCatalogStatus();
+  renderPriceStatus();
   renderStockSideList();
   renderStockReviewQueue();
   renderStockRankings();
@@ -1346,12 +1425,14 @@ function renderStockDetail(detail) {
 
       <section class="detail-section stock-detail-actions">
         <button type="button" class="secondary-btn" id="edit-stock-btn">编辑股票</button>
+        <button type="button" class="secondary-btn" id="update-stock-detail-prices-btn">更新行情</button>
         <button type="button" class="secondary-btn danger-btn" id="archive-stock-btn">删除/归档</button>
       </section>
     </article>
   `;
 
   els.detail.querySelector("#edit-stock-btn")?.addEventListener("click", () => startEditStock(stock));
+  els.detail.querySelector("#update-stock-detail-prices-btn")?.addEventListener("click", () => updateStockPrices(stock.stock_id));
   els.detail.querySelector("#archive-stock-btn")?.addEventListener("click", () => archiveSelectedStock(stock.stock_id));
   bindStockNoteActions(stock.stock_id);
   els.detail.querySelectorAll("[data-article-id]").forEach((button) => {
@@ -1838,12 +1919,14 @@ async function selectArticle(articleId) {
 
 async function refreshStocks() {
   const query = getStockSearchQuery();
-  const [data, review] = await Promise.all([
+  const [data, review, priceStatus] = await Promise.all([
     fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(query)}`),
     fetchJson("/api/stocks/review-queue"),
+    fetchJson("/api/stocks/prices/status"),
   ]);
   state.stockDashboard = data;
   state.stockReviewQueue = review.items || [];
+  state.stockPriceStatus = priceStatus;
   renderStocks();
 }
 
@@ -1851,6 +1934,13 @@ async function refreshStockCatalogStatus() {
   const status = await fetchJson("/api/stocks/catalog/status");
   state.stockCatalogStatus = status;
   renderCatalogStatus();
+  return status;
+}
+
+async function refreshStockPriceStatus() {
+  const status = await fetchJson("/api/stocks/prices/status");
+  state.stockPriceStatus = status;
+  renderPriceStatus();
   return status;
 }
 
@@ -1874,6 +1964,44 @@ async function updateStockCatalog() {
   } finally {
     els.updateStockCatalogBtn.disabled = false;
     els.updateStockCatalogBtn.textContent = "更新股票目录";
+  }
+}
+
+async function updateStockPrices(stockId = "") {
+  const globalButton = els.updateStockPricesBtn;
+  const detailButton = els.detail.querySelector("#update-stock-detail-prices-btn");
+  const activeButton = stockId ? detailButton : globalButton;
+  if (globalButton) globalButton.disabled = true;
+  if (detailButton) detailButton.disabled = true;
+  if (activeButton) activeButton.textContent = "更新中...";
+  els.stockPriceUpdateStatus.textContent = stockId ? "正在更新这只股票行情" : "正在更新关注池行情";
+  els.stockPriceUpdateStatus.dataset.tone = "";
+  try {
+    const result = await fetchJson("/api/stocks/prices/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(stockId ? { stock_id: stockId } : {}),
+    });
+    state.stockPriceStatus = result.status || await refreshStockPriceStatus();
+    const fallbackText = result.fallback_count ? `，备用源 ${result.fallback_count} 只` : "";
+    els.stockPriceUpdateStatus.textContent = `行情已更新：${result.updated || 0} 只${fallbackText}${result.failed ? `，失败 ${result.failed} 只` : ""}`;
+    els.stockPriceUpdateStatus.dataset.tone = result.failed ? "warning" : "success";
+    renderPriceUpdateDetail(result, result.failed ? "warning" : (result.fallback_count ? "success" : ""));
+    await refreshStocks();
+    if (state.selectedStockId) await selectStock(state.selectedStockId);
+  } catch (error) {
+    els.stockPriceUpdateStatus.textContent = error.message || "行情更新失败";
+    els.stockPriceUpdateStatus.dataset.tone = "danger";
+    renderPriceUpdateDetail(error.data || { failures: [{ error: error.message }] }, "danger");
+  } finally {
+    if (globalButton) {
+      globalButton.disabled = false;
+      globalButton.textContent = "更新全部行情";
+    }
+    if (detailButton) {
+      detailButton.disabled = false;
+      detailButton.textContent = "更新行情";
+    }
   }
 }
 
@@ -1924,18 +2052,20 @@ function closeArticleReader() {
 }
 
 async function refreshAll() {
-  const [{ articles }, { authors }, stockDashboard, review, catalogStatus] = await Promise.all([
+  const [{ articles }, { authors }, stockDashboard, review, catalogStatus, priceStatus] = await Promise.all([
     fetchJson("/api/articles"),
     fetchJson("/api/authors"),
     fetchJson(`/api/stocks?range=${encodeURIComponent(state.stockRange)}&order=${encodeURIComponent(state.stockOrder)}&q=${encodeURIComponent(getStockSearchQuery())}`),
     fetchJson("/api/stocks/review-queue"),
     fetchJson("/api/stocks/catalog/status"),
+    fetchJson("/api/stocks/prices/status"),
   ]);
   state.articles = articles;
   state.authors = authors;
   state.stockDashboard = stockDashboard;
   state.stockReviewQueue = review.items || [];
   state.stockCatalogStatus = catalogStatus;
+  state.stockPriceStatus = priceStatus;
   renderAll();
 
   if (state.activeView === "stocks") {
@@ -2038,6 +2168,7 @@ els.allStocksBtn.addEventListener("click", async () => {
 els.stockForm.addEventListener("submit", submitStockForm);
 els.cancelStockEditBtn.addEventListener("click", resetStockForm);
 els.updateStockCatalogBtn.addEventListener("click", updateStockCatalog);
+els.updateStockPricesBtn.addEventListener("click", () => updateStockPrices());
 els.stockQuery.addEventListener("input", () => {
   state.stockCandidate = null;
   els.stockSelectedId.value = "";

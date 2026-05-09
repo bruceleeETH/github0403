@@ -144,6 +144,20 @@
                     </form>
                 </section>
 
+                <section class="article-panel stock-price-panel" aria-labelledby="stock-price-title">
+                    <div class="pane-title-row article-toolbar">
+                        <div>
+                            <h2 id="stock-price-title">真实行情</h2>
+                            <p id="stock-price-status" class="section-note">只更新关注池股票，不保存全市场行情。</p>
+                        </div>
+                        <div class="stock-form-head-actions">
+                            <button id="update-stock-prices-btn" class="secondary-btn" type="button">更新全部行情</button>
+                            <span id="stock-price-update-status" class="inline-status"></span>
+                        </div>
+                    </div>
+                    <p id="stock-price-update-detail" class="stock-price-update-detail" hidden></p>
+                </section>
+
                 <section class="article-panel stock-review-panel" aria-labelledby="stock-review-title">
                     <div class="pane-title-row article-toolbar">
                         <div>
@@ -159,7 +173,7 @@
                     <div class="pane-title-row article-toolbar">
                         <div>
                             <h2 id="stock-rank-title">股票表现榜</h2>
-                            <p id="stock-rank-note" class="section-note">测试数据</p>
+                            <p id="stock-rank-note" class="section-note">真实行情</p>
                         </div>
                         <span id="stock-count" class="count-label">0 只</span>
                     </div>
