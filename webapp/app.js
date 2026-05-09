@@ -204,14 +204,31 @@ function normalizeStockAnalysisItem(item) {
   };
 }
 
+function compactStockName(value) {
+  return String(value || "").replace(/\s+/g, "");
+}
+
+function normalizeStockCodeForCompare(value) {
+  const text = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  return text.replace(/^(SH|SZ|BJ|HK|US)[.\-_:]?/, "");
+}
+
+function normalizeStockIdForCompare(value) {
+  const text = String(value || "").trim().toUpperCase().replace(/\s+/g, "");
+  const prefixed = /^(SH|SZ|BJ|HK|US)[.\-_:]?(.+)$/.exec(text);
+  return prefixed ? `${prefixed[1]}.${prefixed[2]}` : text;
+}
+
 function findWatchedStock(item) {
   const normalized = normalizeStockAnalysisItem(item);
-  const normalizedCode = normalized.code.toUpperCase();
-  const normalizedName = normalized.name.replace(/\s+/g, "");
+  const normalizedCode = normalizeStockCodeForCompare(normalized.code);
+  const normalizedStockId = normalizeStockIdForCompare(normalized.code);
+  const normalizedName = compactStockName(normalized.name);
   return (state.stockDashboard.stocks || []).find((stock) => (
     stock.status !== "archived" &&
-    ((normalizedCode && String(stock.code || "").toUpperCase() === normalizedCode) ||
-      (normalizedName && String(stock.name || "").replace(/\s+/g, "") === normalizedName))
+    ((normalizedStockId && normalizeStockIdForCompare(stock.stock_id) === normalizedStockId) ||
+      (normalizedCode && normalizeStockCodeForCompare(stock.code || stock.stock_id) === normalizedCode) ||
+      (normalizedName && compactStockName(stock.name) === normalizedName))
   ));
 }
 
@@ -310,6 +327,8 @@ function renderArticleStockAction(normalized, watched, tagText, watchReason) {
     return `
       <button type="button" class="primary-btn article-stock-add-btn"
         data-query="${escapeHtml(normalized.code || normalized.name)}"
+        data-name="${escapeHtml(normalized.name)}"
+        data-code="${escapeHtml(normalized.code)}"
         data-tags="${escapeHtml(tagText)}"
         data-reason="${escapeHtml(watchReason)}">加入股票池</button>
     `;
@@ -1133,16 +1152,56 @@ async function savePersonalNote(articleId) {
 async function addArticleStockToPool(button) {
   button.disabled = true;
   button.textContent = "匹配中...";
+  const originalText = "加入股票池";
+  const actions = button.closest(".article-stock-actions");
+  actions?.querySelector(".inline-status")?.remove();
   try {
     const query = button.dataset.query || "";
     const search = await fetchJson(`/api/stocks/search?q=${encodeURIComponent(query)}&limit=6`);
     const compactQuery = query.replace(/\s+/g, "").toUpperCase();
-    const stock = (search.items || []).find((item) => (
+    const candidates = search.items || [];
+    const stock = candidates.find((item) => (
       item.stock_id === compactQuery ||
       item.code?.toUpperCase() === compactQuery ||
       item.name?.replace(/\s+/g, "").toUpperCase() === compactQuery
-    )) || ((search.items || []).length === 1 ? search.items[0] : null);
-    if (!stock?.stock_id) throw new Error("未匹配到唯一股票，请先更新目录或手动添加");
+    )) || (candidates.length === 1 ? candidates[0] : null);
+    if (!stock?.stock_id) {
+      const rawCode = String(button.dataset.code || "").trim();
+      const rawName = String(button.dataset.name || "").trim();
+      if (rawCode && rawName && candidates.length === 0) {
+        button.textContent = "加入中...";
+        const result = await fetchJson("/api/stocks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            code: rawCode,
+            name: rawName,
+            tags: button.dataset.tags || "",
+            watch_reason: button.dataset.reason || "",
+          }),
+        });
+        await refreshStocks();
+        syncArticleStockActions();
+        if (result.stock?.stock_id) button.dataset.stockId = result.stock.stock_id;
+        return;
+      }
+
+      state.stockCandidate = null;
+      state.stockCandidates = candidates;
+      await setViewMode("stocks");
+      els.stockQuery.value = query;
+      els.stockTags.value = button.dataset.tags || "";
+      els.stockReason.value = button.dataset.reason || "";
+      renderStockCandidates();
+      els.stockFormStatus.textContent = candidates.length
+        ? "请从候选中选择具体股票后添加。"
+        : "没有匹配到股票，请更新股票目录或手动输入代码。";
+      els.stockFormStatus.dataset.tone = candidates.length ? "warning" : "danger";
+      button.disabled = false;
+      button.textContent = originalText;
+      return;
+    }
+
     button.textContent = "加入中...";
     const result = await fetchJson("/api/stocks", {
       method: "POST",
@@ -1158,12 +1217,15 @@ async function addArticleStockToPool(button) {
     if (result.stock?.stock_id) button.dataset.stockId = result.stock.stock_id;
   } catch (error) {
     button.disabled = false;
-    button.textContent = error.message?.includes("已在关注池") ? "已关注" : "重试加入";
+    button.textContent = originalText;
     button.title = error.message || "加入失败";
     if (error.message?.includes("已在关注池")) {
       await refreshStocks();
       syncArticleStockActions();
+      return;
     }
+    actions?.querySelector(".inline-status")?.remove();
+    button.insertAdjacentHTML("afterend", `<span class="inline-status" data-tone="danger">${escapeHtml(error.message || "加入失败")}</span>`);
   }
 }
 

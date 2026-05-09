@@ -288,6 +288,17 @@ export function findStockCatalogRecord(dataDir, stockId, options = {}) {
 }
 
 function resolveStockCatalogRecord(dataDir, input = {}, options = {}) {
+    if (!input.stock_id && input.code && input.name) {
+        return normalizeStockCatalogRecord({
+            code: input.code,
+            exchange: input.exchange,
+            name: input.name,
+            market: input.market,
+            industry: input.industry,
+            source: input.source || "article_analysis",
+        }, { ...options, source: input.source || options.source || "article_analysis" });
+    }
+
     const status = getStockCatalogStatus(dataDir, options);
     if (!status.exists || status.count === 0) throw new Error("股票目录为空，请先更新股票目录");
     if (input.stock_id) {

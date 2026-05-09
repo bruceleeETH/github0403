@@ -87,6 +87,29 @@ test("addStock normalizes identifiers without creating market prices", (t) => {
     assert.equal(detail.prices.length, 0);
 });
 
+test("addStock accepts article extracted code and name without a catalog match", (t) => {
+    const dir = makeTempDir(t);
+    const stock = addStock(dir, {
+        code: "688981",
+        name: "中芯国际",
+        tags: "半导体、国产替代",
+        watch_reason: "来自文章分析",
+    }, {
+        seed: false,
+        now: new Date("2026-05-08T07:30:00.000Z"),
+    });
+
+    assert.equal(stock.stock_id, "SH.688981");
+    assert.equal(stock.name, "中芯国际");
+    assert.equal(stock.market, "A股");
+    assert.deepEqual(stock.tags, ["半导体", "国产替代"]);
+    assert.equal(stock.watch_reason, "来自文章分析");
+    assert.throws(
+        () => addStock(dir, { code: "SH.688981", name: "中芯国际" }, { seed: false }),
+        /股票已在关注池中/
+    );
+});
+
 test("daily prices keep real quote fields and upsert by stock/date/adjust", (t) => {
     const dir = makeTempDir(t);
     seedCatalog(dir);
