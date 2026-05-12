@@ -54,6 +54,7 @@ const state = {
   articleListScrollTop: 0,
   dateRange: "today",
   isFetching: false,
+  serviceReady: false,
 };
 
 const els = {
@@ -110,6 +111,7 @@ const els = {
   stockReviewCount: document.querySelector("#stock-review-count"),
   stockReviewList: document.querySelector("#stock-review-list"),
   batchLinks: document.querySelector("#batch-links"),
+  serviceStatus: document.querySelector("#service-status"),
   linkCounter: document.querySelector("#link-counter"),
   parseLinksBtn: document.querySelector("#parse-links-btn"),
   startFetchBtn: document.querySelector("#start-fetch-btn"),
@@ -183,6 +185,46 @@ function renderPriceStatus() {
     renderPriceUpdateDetail(last, last.failed ? "warning" : "success");
   } else {
     renderPriceUpdateDetail(null);
+  }
+}
+
+function setServiceStatus(message, tone = "") {
+  if (!els.serviceStatus) return;
+  els.serviceStatus.textContent = message;
+  els.serviceStatus.dataset.tone = tone;
+}
+
+function browserPort() {
+  return window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+}
+
+async function checkServiceHealth() {
+  setServiceStatus("正在检查本地服务...", "checking");
+  try {
+    const health = await fetchJson("/api/health", { cache: "no-store" });
+    const serverPort = String(health.port || "");
+    if (serverPort && serverPort !== browserPort()) {
+      state.serviceReady = false;
+      setServiceStatus(`端口不一致：页面 ${browserPort()} / 服务 ${serverPort}，请打开启动日志里的地址。`, "danger");
+      renderQueue();
+      throw new Error("页面端口与服务端口不一致");
+    }
+
+    state.serviceReady = true;
+    const modelText = health.deepseek?.configured
+      ? `模型 ${health.deepseek.model || "已配置"}`
+      : "未配置 DEEPSEEK_API_KEY";
+    setServiceStatus(`本地服务正常 · 端口 ${serverPort || browserPort()} · ${modelText}`, health.deepseek?.configured ? "success" : "warning");
+    renderQueue();
+    return health;
+  } catch (error) {
+    state.serviceReady = false;
+    const message = /API 不存在|Not Found/i.test(error.message)
+      ? "服务版本过旧，请停止旧 npm start 后重新启动。"
+      : error.message;
+    setServiceStatus(`本地服务检查失败：${message}`, "danger");
+    renderQueue();
+    throw error;
   }
 }
 
@@ -811,7 +853,7 @@ function renderQueue() {
   const lineCount = els.batchLinks.value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).length;
   els.linkCounter.textContent = `${lineCount} / ${BATCH_LINK_LIMIT}`;
   els.linkCounter.dataset.tone = state.queueOverLimit ? "danger" : "";
-  els.startFetchBtn.disabled = state.isFetching || state.queueOverLimit || actionableCount === 0;
+  els.startFetchBtn.disabled = !state.serviceReady || state.isFetching || state.queueOverLimit || actionableCount === 0;
 
   if (state.queue.length === 0) {
     els.queueList.innerHTML = `<div class="empty-state compact">解析后会在这里显示抓取队列。</div>`;
@@ -2432,6 +2474,8 @@ applyDetailLayoutConfig();
 restoreDetailPaneWidth();
 setupDetailResizer();
 
-refreshAll().catch((error) => {
-  renderEmptyDetail(`初始化失败：${error.message}`);
-});
+checkServiceHealth()
+  .then(() => refreshAll())
+  .catch((error) => {
+    renderEmptyDetail(`初始化失败：${error.message}`);
+  });

@@ -528,6 +528,26 @@ select.text-input {
     font-size: 12px;
 }
 
+.service-status {
+    margin: 6px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.service-status[data-tone="success"] {
+    color: var(--success);
+}
+
+.service-status[data-tone="warning"],
+.service-status[data-tone="checking"] {
+    color: var(--warning);
+}
+
+.service-status[data-tone="danger"] {
+    color: var(--danger);
+}
+
 .inline-status[data-tone="success"] {
     color: var(--success);
 }

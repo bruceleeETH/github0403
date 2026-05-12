@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { DEFAULT_OUTPUT_DIR, INDEX_FILE_NAME, STOCK_TRACKING_DIR } from "../src/config/constants.mjs";
 import { analyzeArticle, isModelAnalysis, sanitizeModelAnalysis } from "../src/core/analyze-article.mjs";
 import { captureArticleToLocal } from "../src/core/capture-article.mjs";
+import { getDeepSeekConfig } from "../src/core/deepseek-analyzer.mjs";
 import { buildMarkdown } from "../src/core/export-article.mjs";
 import { listAccountArticles } from "../src/core/list-account-articles.mjs";
 import { readPersonalNote, writePersonalNote } from "../src/core/personal-note.mjs";
@@ -47,6 +48,30 @@ const execFileAsync = promisify(execFile);
 const captureRunner = new SerialTaskRunner("capture");
 const stockCatalogRunner = new SerialTaskRunner("stock_catalog_update");
 const stockPriceRunner = new SerialTaskRunner("stock_price_update");
+
+function buildHealthPayload() {
+    const deepseek = getDeepSeekConfig();
+    const address = server.address();
+    const actualPort = typeof address === "object" && address ? address.port : PORT;
+    return {
+        ok: true,
+        server: "wechat-article-saver",
+        port: actualPort,
+        data_dir: DEFAULT_OUTPUT_DIR,
+        stock_tracking_dir: STOCK_TRACKING_DIR,
+        deepseek: {
+            configured: Boolean(deepseek.apiKey),
+            model: deepseek.model,
+            base_url: deepseek.baseUrl,
+        },
+        features: {
+            article_capture: true,
+            article_analyze: true,
+            stock_tracking: true,
+            sector_tracking: true,
+        },
+    };
+}
 
 function getMimeType(filePath) {
     const ext = path.extname(filePath).toLowerCase();
@@ -393,6 +418,10 @@ async function analyzeStoredArticle(articleId) {
 }
 
 async function handleApi(req, res, url) {
+    if (req.method === "GET" && url.pathname === "/api/health") {
+        return sendJson(res, 200, buildHealthPayload());
+    }
+
     if (req.method === "GET" && url.pathname === "/api/stocks/catalog/status") {
         return sendJson(res, 200, getStockCatalogStatus(STOCK_TRACKING_DIR));
     }
@@ -769,7 +798,7 @@ export const server = http.createServer(async (req, res) => {
 });
 
 export function startServer() {
-    const maxPortAttempts = Number(process.env.PORT_MAX_ATTEMPTS || 10);
+    const maxPortAttempts = Number(process.env.PORT_MAX_ATTEMPTS || 1);
     const initialPort = PORT;
     let currentPort = initialPort;
 
@@ -779,6 +808,11 @@ export function startServer() {
             if (error.code === "EADDRINUSE" && currentPort < initialPort + maxPortAttempts - 1) {
                 currentPort += 1;
                 listen();
+                return;
+            }
+            if (error.code === "EADDRINUSE") {
+                console.error(`端口 ${currentPort} 已被占用。请先停止旧服务，或显式指定其他端口：PORT=${currentPort + 1} npm start`);
+                process.exitCode = 1;
                 return;
             }
             console.error(`本地网页启动失败: ${error.message}`);

@@ -1,5 +1,13 @@
 export async function fetchJson(url, options) {
-  const resp = await fetch(url, options);
+  let resp;
+  try {
+    resp = await fetch(url, options);
+  } catch (error) {
+    const friendly = new Error("本地服务未连接，请确认 npm start 正在运行，且浏览器地址端口与启动日志一致。");
+    friendly.cause = error;
+    throw friendly;
+  }
+
   const text = await resp.text();
   let data = {};
 
